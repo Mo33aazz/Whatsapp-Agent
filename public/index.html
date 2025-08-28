@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp AI Bot Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>WhatsApp AI Bot Dashboard</h1>
+            <div class="status-indicator" id="statusIndicator">
+                <span class="status-dot" id="statusDot"></span>
+                <span id="statusText">Checking status...</span>
+            </div>
+        </header>
+
+        <main class="main-content">
+            <!-- QR Code Section -->
+            <section class="card qr-section">
+                <h2>WhatsApp Connection</h2>
+                <div class="qr-container" id="qrContainer">
+                    <div class="qr-placeholder" id="qrPlaceholder">
+                        <div class="loading-spinner"></div>
+                        <p>Loading QR Code...</p>
+                    </div>
+                    <img id="qrImage" class="qr-image" style="display: none;" alt="WhatsApp QR Code">
+                </div>
+                <div class="qr-actions">
+                    <button id="refreshQr" class="btn btn-secondary">Refresh QR Code</button>
+                    <p class="qr-instructions">Scan this QR code with your WhatsApp to connect the bot</p>
+                </div>
+            </section>
+
+            <!-- Configuration Section -->
+            <section class="card config-section">
+                <h2>AI Configuration</h2>
+                <form id="configForm" class="config-form">
+                    <div class="form-group">
+                        <label for="apiKey">OpenRouter API Key *</label>
+                        <div class="input-wrapper">
+                            <input type="password" id="apiKey" name="apiKey" placeholder="sk-or-v1-..." required autocomplete="off">
+                            <button type="button" class="toggle-password" id="toggleApiKey" aria-label="Toggle API key visibility">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                            <div class="validation-icon" id="apiKeyValidation">
+                                <i class="fas fa-check-circle valid-icon"></i>
+                                <i class="fas fa-exclamation-circle invalid-icon"></i>
+                            </div>
+                        </div>
+                        <div class="validation-message" id="apiKeyMessage"></div>
+                        <div class="api-key-strength" id="apiKeyStrength">
+                            <div class="strength-bar">
+                                <div class="strength-fill"></div>
+                            </div>
+                            <span class="strength-text">Enter API key</span>
+                        </div>
+                        <small class="form-help">Get your API key from <a href="https://openrouter.ai" target="_blank">OpenRouter.ai</a>. Should start with 'sk-or-v1-' or 'sk-'</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="aiModel">AI Model *</label>
+                        <div class="input-wrapper">
+                            <select id="aiModel" name="aiModel" required>
+                                <option value="">Select a model...</option>
+                                <option value="openai/gpt-4o-mini">OpenAI GPT-4o Mini (Recommended)</option>
+                                <option value="openai/gpt-4o">OpenAI GPT-4o</option>
+                                <option value="openai/gpt-3.5-turbo">OpenAI GPT-3.5 Turbo</option>
+                                <option value="anthropic/claude-3-haiku">Claude 3 Haiku</option>
+                                <option value="anthropic/claude-3-sonnet">Claude 3 Sonnet</option>
+                            </select>
+                            <div class="validation-icon" id="aiModelValidation">
+                                <i class="fas fa-check-circle valid-icon"></i>
+                                <i class="fas fa-exclamation-circle invalid-icon"></i>
+                            </div>
+                        </div>
+                        <div class="validation-message" id="aiModelMessage"></div>
+                        <small class="form-help">Choose the AI model that best fits your needs and budget</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="systemPrompt">System Prompt</label>
+                        <div class="input-wrapper">
+                            <textarea id="systemPrompt" name="systemPrompt" rows="3" placeholder="You are a helpful WhatsApp assistant." maxlength="500"></textarea>
+                            <div class="char-counter">
+                                <span id="promptCharCount">0</span>/500
+                            </div>
+                        </div>
+                        <div class="validation-message" id="systemPromptMessage"></div>
+                        <small class="form-help">Define how the AI should behave and respond to messages</small>
+                    </div>
+                    
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary" id="saveConfigBtn">
+                            <span class="btn-text">Save Configuration</span>
+                            <span class="btn-loading" style="display: none;">
+                                <i class="fas fa-spinner fa-spin"></i> Saving...
+                            </span>
+                        </button>
+                        <button type="button" id="testConnection" class="btn btn-secondary">
+                            <span class="btn-text">
+                                <i class="fas fa-plug"></i> Test Connection
+                            </span>
+                            <span class="btn-loading" style="display: none;">
+                                <i class="fas fa-spinner fa-spin"></i> Testing...
+                            </span>
+                        </button>
+                        <button type="button" id="clearForm" class="btn btn-outline">
+                            <i class="fas fa-eraser"></i> Clear Form
+                        </button>
+                    </div>
+                    <div class="form-status" id="formStatus"></div>
+                </form>
+            </section>
+
+            <!-- Status Section -->
+            <section class="card status-section">
+                <h2>System Status</h2>
+                <div class="status-grid">
+                    <div class="status-item">
+                        <span class="status-label">WAHA Connection</span>
+                        <span class="status-value" id="wahaStatus">Checking...</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">OpenRouter Configured</span>
+                        <span class="status-value" id="openrouterStatus">Checking...</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">WhatsApp Session</span>
+                        <span class="status-value" id="sessionStatus">Checking...</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Messages Processed</span>
+                        <span class="status-value" id="messagesCount">0</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Uptime</span>
+                        <span class="status-value" id="uptime">0h 0m</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Conversations Section -->
+            <section class="card conversations-section">
+                <h2>Recent Conversations</h2>
+                <div class="conversations-container" id="conversationsContainer">
+                    <div class="loading-placeholder">Loading conversations...</div>
+                </div>
+                <button id="refreshConversations" class="btn btn-secondary">Refresh Conversations</button>
+            </section>
+        </main>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <script src="script.js"></script>
+</body>
+</html>

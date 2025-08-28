@@ -1,0 +1,41 @@
+{
+  "name": "whatsapp-ai-bot",
+  "version": "1.0.0",
+  "description": "Node.js backend application that integrates WAHA (WhatsApp HTTP API) with OpenRouter AI to create an intelligent WhatsApp chatbot",
+  "main": "server.js",
+  "scripts": {
+    "start": "node start.js",
+    "dev": "nodemon server.js",
+    "server": "node server.js",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "check": "node -c server.js && echo 'Syntax check passed'"
+  },
+  "keywords": [
+    "whatsapp",
+    "ai",
+    "chatbot",
+    "waha",
+    "openrouter",
+    "express"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.6.2",
+    "bullmq": "^5.58.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-rate-limit": "^7.5.1",
+    "helmet": "^7.1.0",
+    "redis": "^5.8.2",
+    "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  }
+}

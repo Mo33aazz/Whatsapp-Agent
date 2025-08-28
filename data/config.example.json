@@ -1,0 +1,9 @@
+{
+  "openrouterApiKey": "your-openrouter-api-key-here",
+  "aiModel": "openai/gpt-4o-mini",
+  "systemPrompt": "You are a helpful AI assistant for WhatsApp. Be concise and friendly in your responses. Keep messages under 2000 characters.",
+  "wahaUrl": "http://localhost:3000",
+  "sessionName": "default",
+  "lastUpdated": "",
+  "wahaBaseUrl": "http://localhost:3000"
+}
