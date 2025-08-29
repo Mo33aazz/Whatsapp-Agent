@@ -1,6 +1,7 @@
 const fs = require('fs').promises;
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
+const logger = require('../utils/logger');
 
 // Module-level write buffer map to avoid 'this' binding issues
 const WRITE_BUFFERS = new Map();
@@ -58,9 +59,9 @@ class MemoryService {
       // Ensure permanent message log exists (JSONL)
       await this.ensureFileExistsPlain(this.messagesLogFile, '');
       
-      console.log('Memory service initialized successfully');
+      logger.info('Memory', 'Memory service initialized successfully');
     } catch (error) {
-      console.error('Error initializing memory service:', error);
+      logger.error('Error initializing memory service', 'Memory', { error: error.message });
       throw error;
     }
   }
@@ -100,9 +101,9 @@ class MemoryService {
 
       await this.writeJsonFile(this.conversationsFile, migrated);
       this.cache.conversations = migrated;
-      console.log('Conversations storage normalized to object-map format');
+      logger.info('Memory', 'Conversations storage normalized to object-map format');
     } catch (err) {
-      console.warn('Conversations file migration check failed:', err.message);
+      logger.warn('Memory', 'Conversations file migration check failed', { error: err.message });
     }
   }
 
@@ -139,7 +140,7 @@ class MemoryService {
       if ((!existingConfig.openrouterApiKey || existingConfig.openrouterApiKey === '') && envConfig.openrouterApiKey) {
         updatedConfig.openrouterApiKey = envConfig.openrouterApiKey;
         configUpdated = true;
-        console.log('Synced OpenRouter API key from environment variables');
+        logger.info('Memory', 'Synced OpenRouter API key from environment variables');
       }
       
       // Sync other values if they're missing
@@ -164,10 +165,10 @@ class MemoryService {
         await this.writeJsonFile(this.configFile, updatedConfig);
         // Clear cache to force reload
         this.cache.config = null;
-        console.log('Configuration synchronized with environment variables');
+        logger.info('Memory', 'Configuration synchronized with environment variables');
       }
     } catch (error) {
-      console.error('Error syncing config with environment:', error);
+      logger.error('Error syncing config with environment', 'Config', { error: error.message });
       // Don't throw error here to avoid breaking initialization
     }
   }
@@ -223,7 +224,7 @@ class MemoryService {
       try {
         await fs.writeFile(filePath, JSON.stringify(payload, null, 2));
       } catch (err) {
-        console.error(`Buffered write failed for ${filePath}:`, err);
+        logger.error(`Buffered write failed for ${filePath}`, 'Buffer', { filePath, error: err.message });
       } finally {
         entry.inFlight = false;
         if (entry.pending) {
@@ -247,7 +248,7 @@ class MemoryService {
       const parsed = JSON.parse(data);
       return parsed === null ? {} : parsed;
     } catch (error) {
-      console.error(`Error reading JSON file ${filePath}:`, error);
+      logger.error(`Error reading JSON file ${filePath}`, 'File', { filePath, error: error.message });
       return {};
     }
   }
@@ -261,7 +262,7 @@ class MemoryService {
     try {
       await fs.writeFile(filePath, JSON.stringify(data, null, 2));
     } catch (error) {
-      console.error(`Error writing JSON file ${filePath}:`, error);
+      logger.error(`Error writing JSON file ${filePath}`, 'File', { filePath, error: error.message });
       throw error;
     }
   }
@@ -353,7 +354,7 @@ class MemoryService {
       };
       await fs.writeFile(this.messagesLogFile, JSON.stringify(logRecord) + "\n", { flag: 'a' });
     } catch (err) {
-      console.warn('Failed to append to messages log:', err.message);
+      logger.warn('Memory', 'Failed to append to messages log', { error: err.message });
     }
 
     // Update status (buffered)
@@ -478,7 +479,7 @@ class MemoryService {
       }
       return history;
     } catch (err) {
-      console.warn('Failed to read messages log:', err.message);
+      logger.warn('Memory', 'Failed to read messages log', { error: err.message });
       return [];
     }
   }

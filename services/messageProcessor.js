@@ -2,6 +2,7 @@ const wahaService = require('./wahaService');
 const openrouterService = require('./openrouterService');
 const httpClient = require('../utils/httpClient');
 const memoryService = require('./memoryService');
+const logger = require('../utils/logger');
 
 class MessageProcessor {
   constructor() {
@@ -16,16 +17,16 @@ class MessageProcessor {
    */
   async processMessage(payload, session) {
     const timestamp = new Date().toISOString();
-    console.log(`\n🔄 [${timestamp}] Starting message processing...`);
-    console.log('📥 Raw payload received:', JSON.stringify(payload, null, 2));
+    logger.info('MSG', `Starting message processing at ${timestamp}`);
+    logger.debug('MSG', 'Raw payload received', { payload });
     
     try {
       // First validate the payload
       if (!this.validatePayload(payload)) {
-        console.log('❌ Payload validation failed - skipping message');
+        logger.warn('MSG', 'Payload validation failed - skipping message');
         return false;
       }
-      console.log('✅ Payload validation passed');
+      logger.debug('MSG', 'Payload validation passed');
       
       // Extract message information
       const messageId = payload?.id
@@ -43,7 +44,7 @@ class MessageProcessor {
       const messageType = payload?.type || payload?.message?.type || 'text';
       const isFromMe = !!(payload?.fromMe || payload?.message?.fromMe || payload?.key?.fromMe);
       
-      console.log('📋 Extracted message details:', {
+      logger.info('MSG', 'Extracted message details', {
         messageId,
         chatId,
         messageBody: messageBody.substring(0, 100) + (messageBody.length > 100 ? '...' : ''),
@@ -54,10 +55,10 @@ class MessageProcessor {
 
       // Skip messages from bot itself
       if (isFromMe) {
-        console.log('🤖 Skipping message from bot itself');
+        logger.debug('MSG', 'Skipping message from bot itself');
         return false;
       }
-      console.log('👤 Message is from user - proceeding');
+      logger.debug('MSG', 'Message is from user - proceeding');
 
             // Identify if this is an image message (by type, mimetype, or base64 signature in any known field)
       const looksLikeBase64Image = (str) => typeof str === 'string' && (
@@ -88,35 +89,35 @@ class MessageProcessor {
 
       // Skip unsupported non-text, non-image messages
       if (!isImageMessage && messageType !== 'text' && messageType !== 'chat') {
-        console.log(`Skipping unsupported message type: ${messageType}`);
+        logger.debug('MSG', `Skipping unsupported message type: ${messageType}`);
         return false;
       }
 
       // Skip empty messages only for non-image content
       if (!isImageMessage && (!messageBody || String(messageBody).trim().length === 0)) {
-        console.log('Skipping empty message');
+        logger.debug('MSG', 'Skipping empty message');
         return false;
       }
 
       // Prevent duplicate processing
       const messageKey = `${chatId}_${messageId}`;
       if (this.processingQueue.has(messageKey)) {
-        console.log('🔄 Message already being processed, skipping duplicate');
+        logger.debug('MSG', 'Message already being processed, skipping duplicate');
         return false;
       }
       this.processingQueue.add(messageKey);
-      console.log(`🔒 Added message to processing queue: ${messageKey}`);
+      logger.debug('MSG', `Added message to processing queue: ${messageKey}`);
 
       try {
         // Check if OpenRouter is configured
-        if (!openrouterService.isConfigured()) {
-          console.log('❌ OpenRouter not configured - cannot process message');
+        if (!(await openrouterService.isConfigured())) {
+          logger.warn('MSG', 'OpenRouter not configured - cannot process message');
           return false;
         }
-        console.log('✅ OpenRouter is configured');
+        logger.debug('MSG', 'OpenRouter is configured');
 
         // Save user message to memory
-        console.log('💾 Saving user message to memory...');
+        logger.debug('MSG', 'Saving user message to memory...');
         const storedContent = isImageMessage
           ? ((typeof messageBody === 'string' && messageBody.trim()) ? '[image: base64 received]' : `[image: ${payload?.mimetype || 'unknown'}]`)
           : messageBody;
@@ -127,27 +128,27 @@ class MessageProcessor {
           'user',
           payload
         );
-        console.log('✅ User message saved to memory');
+        logger.debug('MSG', 'User message saved to memory');
 
         // Get full conversation history for context (from permanent JSONL log)
-        console.log('📚 Retrieving conversation history...');
-        const conversationHistory = await memoryService.getFullConversationHistory(chatId);
-        console.log(`📖 Retrieved ${conversationHistory.length} messages from history`);
+        logger.debug('MSG', 'Retrieving conversation history...');
+        const conversationHistory = await memoryService.getRecentHistoryFromLog(chatId, 30);
+        logger.debug('MSG', `Retrieved ${conversationHistory.length} messages from history`);
 
         // Show typing while generating the AI response
-        console.log('⌨️ Sending typing indicator...');
+        logger.debug('MSG', 'Sending typing indicator...');
         await wahaService.startTyping(chatId);
-        console.log('✅ Typing indicator sent');
+        logger.debug('MSG', 'Typing indicator sent');
         try {
           // Generate AI response
-          console.log('🤖 Generating AI response...');
+          logger.info('MSG', 'Generating AI response...');
           let aiResponse;
                     if (isImageMessage) {
-            console.log('🖼️ Processing image + text input for AI');
+            logger.info('MSG', 'Processing image + text input for AI');
             // Build vision input for OpenRouter
             const imageInput = await this.resolveImageInput(payload, messageBody);
             if (!imageInput || !imageInput.base64) {
-              console.log('Image message missing base64 body (after resolve)');
+              logger.warn('MSG', 'Image message missing base64 body (after resolve)');
               return false;
             }
 
@@ -161,23 +162,23 @@ class MessageProcessor {
               conversationHistory
             );
           } else {
-            console.log('📝 Processing text-only input for AI');
+            logger.info('MSG', 'Processing text-only input for AI');
             aiResponse = await openrouterService.generateResponse(
               messageBody,
               conversationHistory
             );
           }
-          console.log(`✅ AI response generated (${aiResponse.length} characters)`);
+          logger.info('MSG', `AI response generated (${aiResponse.length} characters)`);
 
           if (aiResponse && aiResponse.trim().length > 0) {
             // Send AI response back to WhatsApp
-            console.log('📤 Sending AI response to WhatsApp...');
-            console.log('Sending AI response:', aiResponse);
+            logger.info('MSG', 'Sending AI response to WhatsApp...');
+            logger.debug('MSG', 'Sending AI response', { response: aiResponse });
             await wahaService.sendMessage(chatId, aiResponse);
-            console.log('✅ AI response sent successfully');
+            logger.info('MSG', 'AI response sent successfully');
 
             // Save AI response to memory
-            console.log('💾 Saving AI response to memory...');
+            logger.debug('MSG', 'Saving AI response to memory...');
             await memoryService.saveMessage(
               chatId,
               aiResponse,
@@ -185,23 +186,23 @@ class MessageProcessor {
               'ai',
               { generated: true }
             );
-            console.log('✅ AI response saved to memory');
+            logger.debug('MSG', 'AI response saved to memory');
 
-            console.log('🎉 Message processing completed successfully!');
+            logger.info('MSG', 'Message processing completed successfully!');
             return true;
           } else {
-            console.log('No AI response generated');
+            logger.warn('MSG', 'No AI response generated');
             await memoryService.addError('Empty AI response generated');
             return false;
           }
         } finally {
           // Ensure typing indicator is stopped regardless of outcome
-          console.log('⏹️ Stopping typing indicator...');
+          logger.debug('MSG', 'Stopping typing indicator...');
           await wahaService.stopTyping(chatId);
         }
       } catch (error) {
-        console.error('❌ Error processing message:', error);
-        console.error('📊 Error details:', {
+        logger.error('Error processing message', 'Message', { error: error.message });
+      logger.error('Error details', 'Message', {
           message: error.message,
           stack: error.stack,
           chatId,
@@ -213,25 +214,25 @@ class MessageProcessor {
         // Send error message to user if it's a critical error
         if (error.message.includes('API key') || error.message.includes('configuration')) {
           try {
-            console.log('📤 Sending error message to user...');
+            logger.info('MSG', 'Sending error message to user...');
             await wahaService.sendMessage(
               chatId,
               'Sorry, I\'m currently not configured properly. Please contact the administrator.'
             );
-            console.log('✅ Error message sent to user');
+            logger.info('MSG', 'Error message sent to user');
           } catch (sendError) {
-            console.error('❌ Error sending error message:', sendError);
+            logger.error('Error sending error message', 'Message', { error: sendError.message });
           }
         }
         
         return false;
       } finally {
         // Remove from processing queue
-        console.log(`🔓 Removing message from processing queue: ${messageKey}`);
+        logger.debug('MSG', `Removing message from processing queue: ${messageKey}`);
         this.processingQueue.delete(messageKey);
       }
     } catch (error) {
-      console.error('Critical error in message processing:', error);
+      logger.error('Critical error in message processing', 'Message', { error: error.message });
       await memoryService.addError(`Critical processing error: ${error.message}`);
       return false;
     }
@@ -245,11 +246,11 @@ class MessageProcessor {
    */
   async processSystemEvent(payload, session) {
     try {
-      console.log('Processing system event:', payload);
+      logger.info('SYS', 'Processing system event', { payload });
       
       if (payload.event === 'session.status') {
         const status = payload.status;
-        console.log(`Session status changed to: ${status}`);
+        logger.info('SYS', `Session status changed to: ${status}`);
         
         await memoryService.updateStatus({
           wahaConnected: status === 'WORKING' || status === 'AUTHENTICATED'
@@ -260,7 +261,7 @@ class MessageProcessor {
       
       return false;
     } catch (error) {
-      console.error('Error processing system event:', error);
+      logger.error('Error processing system event', 'System', { error: error.message });
       await memoryService.addError(`System event processing error: ${error.message}`);
       return false;
     }
@@ -282,7 +283,7 @@ class MessageProcessor {
    */
   clearQueue() {
     this.processingQueue.clear();
-    console.log('Processing queue cleared');
+    logger.debug('MSG', 'Processing queue cleared');
   }
 
   /**
@@ -300,19 +301,19 @@ class MessageProcessor {
    */
   validatePayload(payload) {
     if (!payload) {
-      console.log('Invalid payload: null or undefined');
+      logger.warn('MSG', 'Invalid payload: null or undefined');
       return false;
     }
 
     const hasId = !!(payload?.id || payload?.message?.id || payload?.key?.id || payload?.data?.id || payload?.payload?.id);
     if (!hasId) {
-      console.log('Invalid payload: missing message ID');
+      logger.warn('MSG', 'Invalid payload: missing message ID');
       return false;
     }
 
     const hasFrom = !!(payload?.from || payload?.chatId || payload?.chat?.id || payload?.remoteJid || payload?.payload?.from);
     if (!hasFrom) {
-      console.log('Invalid payload: missing sender information');
+      logger.warn('MSG', 'Invalid payload: missing sender information');
       return false;
     }
 
@@ -373,18 +374,18 @@ class MessageProcessor {
           const base64 = Buffer.from(resp.data).toString('base64');
           if (base64) return { base64, mimeType, caption };
         } catch (err) {
-          console.log('Failed to download media from URL:', mediaUrl, err.message);
+          logger.warn('MSG', 'Failed to download media from URL', { mediaUrl, error: err.message });
         }
       }
 
       // 4) If WAHA indicates media exists but not downloaded, log hint
       if (payload?.hasMedia && !payload?.media) {
-        console.log('Payload indicates media exists but is not downloaded (no media object).');
+        logger.debug('MSG', 'Payload indicates media exists but is not downloaded (no media object)');
       }
 
       return { base64: '', mimeType: payload?.mimetype || 'image/jpeg', caption };
     } catch (e) {
-      console.log('Error resolving image input:', e.message);
+      logger.warn('MSG', 'Error resolving image input', { error: e.message });
       return { base64: '', mimeType: 'image/jpeg', caption: '' };
     }
   }

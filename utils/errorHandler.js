@@ -1,4 +1,5 @@
 const memoryService = require('../services/memoryService');
+const logger = require('./logger');
 
 class ErrorHandler {
   constructor() {
@@ -11,7 +12,7 @@ class ErrorHandler {
   setupGlobalErrorHandlers() {
     // Handle uncaught exceptions
     process.on('uncaughtException', async (error) => {
-      console.error('Uncaught Exception:', error);
+      logger.error('Uncaught Exception', 'System', { error: error.message, stack: error.stack });
       await this.logError('Uncaught Exception', error);
       
       // Graceful shutdown
@@ -20,7 +21,7 @@ class ErrorHandler {
 
     // Handle unhandled promise rejections
     process.on('unhandledRejection', async (reason, promise) => {
-      console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+      logger.error('Unhandled Rejection', 'System', { reason: reason?.message || reason, promise: promise?.toString() });
       await this.logError('Unhandled Rejection', reason);
     });
 
@@ -42,10 +43,10 @@ class ErrorHandler {
       await memoryService.addError(`${type}: ${errorMessage}`);
       
       if (errorStack) {
-        console.error('Stack trace:', errorStack);
+        logger.error('Stack trace', 'Error', { stack: errorStack });
       }
     } catch (logError) {
-      console.error('Failed to log error:', logError);
+      logger.error('Failed to log error', 'Error', { error: logError.message });
     }
   }
 
@@ -53,7 +54,7 @@ class ErrorHandler {
    * Handle graceful shutdown
    */
   async gracefulShutdown() {
-    console.log('Received shutdown signal, shutting down gracefully...');
+    logger.info('System', 'Received shutdown signal, shutting down gracefully...');
     
     try {
       // Update status to indicate shutdown
@@ -62,10 +63,10 @@ class ErrorHandler {
         lastHealthCheck: new Date().toISOString()
       });
       
-      console.log('Graceful shutdown completed');
+      logger.info('System', 'Graceful shutdown completed');
       process.exit(0);
     } catch (error) {
-      console.error('Error during graceful shutdown:', error);
+      logger.error('Error during graceful shutdown', 'System', { error: error.message });
       process.exit(1);
     }
   }
@@ -78,7 +79,7 @@ class ErrorHandler {
    * @param {Function} next - Express next function
    */
   async expressErrorHandler(err, req, res, next) {
-    console.error('Express error:', err);
+    logger.error('Express error', 'Express', { error: err.message, stack: err.stack });
     
     await this.logError('Express Error', err);
     

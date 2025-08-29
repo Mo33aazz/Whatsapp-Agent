@@ -1,4 +1,5 @@
 const httpClient = require('../utils/httpClient');
+const logger = require('../utils/logger');
 
 class WAHAConnectionUtils {
   constructor(baseURL) {
@@ -9,7 +10,8 @@ class WAHAConnectionUtils {
   // Core connection checking
   async checkConnection() {
     try {
-      console.log('Checking WAHA API connection...');
+      const DEBUG = logger.isLevelEnabled('DEBUG');
+      if (DEBUG) logger.debug('Connection', 'Checking WAHA API connection...');
       
       const response = await httpClient.get(`${this.baseURL}/api/sessions`, {
         timeout: 10000,
@@ -18,8 +20,10 @@ class WAHAConnectionUtils {
         }
       });
       
-      console.log('WAHA API connection successful');
-      console.log('Available sessions:', response.data?.length || 0);
+      if (DEBUG) {
+        logger.info('Connection', 'WAHA API connection successful');
+        logger.info('Connection', 'Available sessions', { count: response.data?.length || 0 });
+      }
       
       return {
         connected: true,
@@ -28,7 +32,9 @@ class WAHAConnectionUtils {
         timestamp: new Date().toISOString()
       };
     } catch (error) {
-      console.error('WAHA API connection failed:', error.message);
+      // Keep errors concise in normal mode
+      const DEBUG = logger.isLevelEnabled('DEBUG');
+      if (DEBUG) logger.error('WAHA API connection failed', 'Connection', { error: error.message });
       
       return {
         connected: false,
@@ -44,22 +50,25 @@ class WAHAConnectionUtils {
     
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        console.log(`Connection attempt ${attempt}/${maxRetries}...`);
+        const DEBUG = logger.isLevelEnabled('DEBUG');
+        if (DEBUG) logger.debug('Connection', `Connection attempt ${attempt}/${maxRetries}...`);
         const result = await this.checkConnection();
         
         if (result.connected) {
-          console.log(`Connection successful on attempt ${attempt}`);
+          if (DEBUG) logger.info('Connection', `Connection successful on attempt ${attempt}`);
           return result;
         }
         
         lastError = new Error(result.error || 'Connection failed');
       } catch (error) {
         lastError = error;
-        console.error(`Attempt ${attempt} failed:`, error.message);
+        const DEBUG = logger.isLevelEnabled('DEBUG');
+        if (DEBUG) logger.error(`Attempt ${attempt} failed`, 'Connection', { error: error.message });
       }
       
       if (attempt < maxRetries) {
-        console.log(`Waiting ${retryDelay}ms before retry...`);
+        const DEBUG = logger.isLevelEnabled('DEBUG');
+        if (DEBUG) logger.debug('Connection', `Waiting ${retryDelay}ms before retry...`);
         await this._sleep(retryDelay);
       }
     }
@@ -70,7 +79,7 @@ class WAHAConnectionUtils {
   // Health check methods
   async getAPIHealth() {
     try {
-      console.log('Checking WAHA API health...');
+      logger.info('Health', 'Checking WAHA API health...');
       
       const response = await httpClient.get(`${this.baseURL}/api/health`, {
         timeout: 5000,
@@ -79,14 +88,14 @@ class WAHAConnectionUtils {
         }
       });
       
-      console.log('API health check successful:', response.data);
+      logger.info('Health', 'API health check successful', { data: response.data });
       return {
         healthy: true,
         data: response.data,
         timestamp: new Date().toISOString()
       };
     } catch (error) {
-      console.error('API health check failed:', error.message);
+      logger.error('API health check failed', 'Health', { error: error.message });
       return {
         healthy: false,
         error: error.message,
@@ -97,7 +106,7 @@ class WAHAConnectionUtils {
 
   async getAPIVersion() {
     try {
-      console.log('Getting WAHA API version...');
+      logger.info('Version', 'Getting WAHA API version...');
       
       const response = await httpClient.get(`${this.baseURL}/api/version`, {
         timeout: 5000,
@@ -106,10 +115,10 @@ class WAHAConnectionUtils {
         }
       });
       
-      console.log('API version:', response.data);
+      logger.info('Version', 'API version', { version: response.data });
       return response.data;
     } catch (error) {
-      console.error('Failed to get API version:', error.message);
+      logger.error('Failed to get API version', 'Version', { error: error.message });
       throw error;
     }
   }
@@ -117,7 +126,7 @@ class WAHAConnectionUtils {
   // Session connectivity
   async checkSessionConnectivity(sessionName) {
     try {
-      console.log(`Checking connectivity for session '${sessionName}'...`);
+      logger.info('Session', `Checking connectivity for session '${sessionName}'...`);
       
       const response = await httpClient.get(`${this.baseURL}/api/sessions/${sessionName}`, {
         timeout: 8000,
@@ -127,7 +136,7 @@ class WAHAConnectionUtils {
       });
       
       const status = response.data?.status || 'UNKNOWN';
-      console.log(`Session '${sessionName}' connectivity status:`, status);
+      logger.info('Session', `Session '${sessionName}' connectivity status`, { status });
       
       return {
         reachable: true,
@@ -136,7 +145,7 @@ class WAHAConnectionUtils {
         timestamp: new Date().toISOString()
       };
     } catch (error) {
-      console.error(`Session '${sessionName}' connectivity check failed:`, error.message);
+      logger.error(`Session '${sessionName}' connectivity check failed`, 'Session', { sessionName, error: error.message });
       
       return {
         reachable: false,
@@ -149,7 +158,7 @@ class WAHAConnectionUtils {
 
   // Network diagnostics
   async performNetworkDiagnostics() {
-    console.log('Performing network diagnostics...');
+    logger.info('Diagnostics', 'Performing network diagnostics...');
     
     const diagnostics = {
       timestamp: new Date().toISOString(),
@@ -204,13 +213,13 @@ class WAHAConnectionUtils {
       };
     }
     
-    console.log('Network diagnostics completed:', diagnostics);
+    logger.info('Diagnostics', 'Network diagnostics completed', { diagnostics });
     return diagnostics;
   }
 
   // Connection monitoring
   async startConnectionMonitoring(intervalMs = 30000, onStatusChange = null) {
-    console.log(`Starting connection monitoring (interval: ${intervalMs}ms)...`);
+    logger.info('Monitor', `Starting connection monitoring (interval: ${intervalMs}ms)...`);
     
     let lastStatus = null;
     
@@ -220,19 +229,19 @@ class WAHAConnectionUtils {
         const currentStatus = result.connected ? 'connected' : 'disconnected';
         
         if (currentStatus !== lastStatus) {
-          console.log(`Connection status changed: ${lastStatus} -> ${currentStatus}`);
+          logger.info('Monitor', `Connection status changed: ${lastStatus} -> ${currentStatus}`);
           lastStatus = currentStatus;
           
           if (onStatusChange) {
             try {
               await onStatusChange(currentStatus, result);
             } catch (callbackError) {
-              console.error('Error in status change callback:', callbackError.message);
+              logger.error('Error in status change callback', 'Callback', { error: callbackError.message });
             }
           }
         }
       } catch (error) {
-        console.error('Error in connection monitoring:', error.message);
+        logger.error('Error in connection monitoring', 'Monitor', { error: error.message });
       }
     };
     
@@ -244,7 +253,7 @@ class WAHAConnectionUtils {
     
     return {
       stop: () => {
-        console.log('Stopping connection monitoring...');
+        logger.info('Monitor', 'Stopping connection monitoring...');
         clearInterval(intervalId);
       },
       intervalId: intervalId
@@ -271,13 +280,13 @@ class WAHAConnectionUtils {
         config.data = data;
       }
       
-      console.log(`Making ${method.toUpperCase()} request to:`, url);
+      logger.debug('Request', `Making ${method.toUpperCase()} request to: ${url}`);
       const response = await httpClient.request(config);
       
-      console.log(`${method.toUpperCase()} request successful:`, response.status);
+      logger.debug('Request', `${method.toUpperCase()} request successful`, { status: response.status });
       return response;
     } catch (error) {
-      console.error(`${method.toUpperCase()} request failed:`, error.message);
+      logger.error(`${method.toUpperCase()} request failed`, 'Request', { method: method.toUpperCase(), error: error.message });
       throw error;
     }
   }
@@ -322,7 +331,7 @@ class WAHAConnectionUtils {
 
   clearConnectionCache() {
     this.connectionCache.clear();
-    console.log('Connection cache cleared');
+    logger.info('Cache', 'Connection cache cleared');
   }
 
   // Utility methods

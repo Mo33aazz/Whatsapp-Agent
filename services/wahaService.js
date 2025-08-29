@@ -1,8 +1,8 @@
-const WAHAWebhookManager = require('./wahaWebhookManager');
 const WAHAQRManager = require('./wahaQRManager');
 const WAHASessionManager = require('./wahaSessionManager');
 const WAHAMessaging = require('./wahaMessaging');
 const WAHAConnectionUtils = require('./wahaConnectionUtils');
+const logger = require('../utils/logger');
 
 class WAHAService {
   constructor() {
@@ -10,7 +10,6 @@ class WAHAService {
     this.sessionName = process.env.WAHA_SESSION_NAME || 'default';
     
     // Initialize all modules
-    this.webhookManager = new WAHAWebhookManager(this.baseURL, this.sessionName);
     this.qrManager = new WAHAQRManager(this.baseURL, this.sessionName);
     this.sessionManager = new WAHASessionManager(this.baseURL, this.sessionName);
     this.messaging = new WAHAMessaging(this.baseURL, this.sessionName);
@@ -28,47 +27,40 @@ class WAHAService {
   // Startup bootstrap: ensure the default session exists with the requested config
   async ensureDefaultSessionExists() {
     try {
-      // Best effort: check WAHA connectivity with brief retries
-      try {
-        if (typeof this.connectionUtils.checkConnectionWithRetry === 'function') {
-          await this.connectionUtils.checkConnectionWithRetry(2, 1500);
-        } else {
-          await this.checkConnection();
-        }
-      } catch (e) {
-        console.log('WAHA not reachable yet; proceeding with session check anyway');
-      }
-
       const sessName = this.sessionName || 'default';
-      const info = await this.sessionManager.getSessionInfo();
-      const status = info?.data?.status || 'UNKNOWN';
-      if (status !== 'NOT_FOUND') {
-        console.log(`Session '${sessName}' already present (status: ${status})`);
-        return { created: false, status };
+      // Always recreate default session on startup – no webhook configuration
+      try { await this.sessionManager.deleteSession(); } catch (_) {}
+      const payload = { name: sessName, start: true };
+      logger.info('WAHA', `Creating WAHA session '${sessName}'...`);
+      const result = await this.sessionManager.createSessionWithConfig(payload);
+      return { created: true, result };
+    } catch (error) {
+      logger.warn('WAHA', 'Ensure default session failed (non-fatal)', { error: error.message });
+      return { created: false, error: error.message };
+    }
+  }
+
+  // Startup bootstrap (webhook-aware): create default session with configured webhook if missing
+  async ensureDefaultSessionExistsWithWebhook() {
+    try {
+      const sessName = this.sessionName || 'default';
+      const current = await this.sessionManager.getSessionStatus();
+      if (current && current.status && current.status !== 'NOT_FOUND') {
+        return { created: false, status: current.status };
       }
 
-      // Build the exact config as requested
-      const webhookUrl = 'http://host.docker.internal:3001/waha-events';
+      const webhookUrl = this.getEventsWebhookUrl();
       const payload = {
         name: sessName,
         start: true,
         config: {
           proxy: null,
           debug: false,
-          noweb: {
-            store: {
-              enabled: true,
-              fullSync: false
-            }
-          },
+          noweb: { store: { enabled: true, fullSync: false } },
           webhooks: [
             {
               url: webhookUrl,
-              events: [
-                'message',
-                'session.status',
-                'message.any'
-              ],
+              events: ['message', 'session.status', 'message.any'],
               hmac: null,
               retries: null,
               customHeaders: null
@@ -77,28 +69,30 @@ class WAHAService {
         }
       };
 
-      console.log(`Creating WAHA session '${sessName}' with startup config...`);
+      logger.info('Session', `Creating WAHA session '${sessName}' with webhook '${webhookUrl}'...`);
       const result = await this.sessionManager.createSessionWithConfig(payload);
-      // Optionally start webhook monitor in background
-      try { this._safeStartWebhookMonitor(); } catch (_) {}
       return { created: true, result };
     } catch (error) {
-      console.log('Ensure default session failed (non-fatal):', error.message);
+      logger.warn('Session', 'Ensure default session (webhook-aware) failed', { error: error.message });
       return { created: false, error: error.message };
     }
   }
 
-  // Webhook URL helpers (delegated to webhook manager)
+  // Webhook URL helpers (no-op/simple helpers)
   getEventsWebhookUrl() {
-    return this.webhookManager.getEventsWebhookUrl();
+    const path = (process.env.WEBHOOK_PATH || '/waha-events');
+    const base = process.env.PUBLIC_BASE_URL;
+    if (base) return `${base.replace(/\/$/, '')}${path.startsWith('/') ? path : '/' + path}`;
+    const port = process.env.PORT || 3001;
+    return `http://host.docker.internal:${port}${path.startsWith('/') ? path : '/' + path}`;
   }
 
   getCandidateWebhookUrls() {
-    return this.webhookManager.getCandidateWebhookUrls();
+    return [this.getEventsWebhookUrl()];
   }
 
   getRequiredEvents() {
-    return this.webhookManager.getRequiredEvents();
+    return ['message', 'session.status', 'state.change', 'message.any'];
   }
 
   // Core QR code functionality (delegated to QR manager)
@@ -125,7 +119,7 @@ class WAHAService {
       this.lastQRCode = qrCode;
       return qrCode;
     } catch (error) {
-      console.error('Error in QR code generation process:', error.message);
+      logger.error('Error in QR code generation process', 'QR', { error: error.message });
       throw error;
     }
   }
@@ -181,9 +175,7 @@ class WAHAService {
     return this.qrManager.startAuthentication();
   }
 
-  async fetchQRCode() {
-    return this.qrManager.fetchQRCodeLegacy();
-  }
+  // Removed legacy fetchQRCode; QR retrieval is handled by getQRCode()
 
   // Connection checking (delegated to connection utils)
   async checkConnection() {
@@ -230,21 +222,8 @@ class WAHAService {
 
   // Session lifecycle (delegated to session manager with webhook integration)
   async startOrUpdateSession() {
-    const webhookUrl = this.getEventsWebhookUrl();
-    const events = this.getRequiredEvents();
-    
-    return this.sessionManager.startOrUpdateSession(
-      webhookUrl,
-      events,
-      () => this.sessionManager.resetCaches(),
-      (error, webhookUrl, events) => this.sessionManager.handleSessionCreateError(
-        error,
-        webhookUrl,
-        events,
-        () => this.sessionManager.startSession(),
-        (url, evts) => this.webhookManager.configureWebhook(url, evts)
-      )
-    );
+    // Simplified: just start session without webhook configuration
+    return this.sessionManager.startSession();
   }
 
   async startSession() {
@@ -254,11 +233,7 @@ class WAHAService {
     return this.sessionManager.startSession();
   }
 
-  async configureWebhook(webhookUrl) {
-    const url = webhookUrl || this.getEventsWebhookUrl();
-    const events = this.getRequiredEvents();
-    return this.webhookManager.configureWebhook(url, events);
-  }
+  async configureWebhook() { return { skipped: true }; }
 
   async stopSession() {
     return this.sessionManager.stopSession();
@@ -298,180 +273,47 @@ class WAHAService {
 
   async ensureSessionStarted() {
     if (this._logoutLocked) return { status: 'LOCKED' };
-    return this.sessionManager.ensureSessionStarted(() => this._safeEnsureWebhook());
+    return this.sessionManager.ensureSessionStarted(() => {});
   }
 
-  // Webhook management (delegated to webhook manager)
-  async setupWebhookAfterAuth(sessionName) {
-    const targetSession = sessionName || this.sessionName;
-    if (this._logoutLocked || !this._autoManageEnabled) return { ensured: false, skipped: true, reason: 'locked' };
-    // Ensure webhook configuration once authenticated
-    return this.webhookManager.ensureWebhookConfigured(
-      targetSession,
-      (sess) => this._getSessionInfo(sess),
-      (ms) => this._sleep(ms)
-    );
-  }
+  // Webhook management disabled (no-op)
+  async setupWebhookAfterAuth() { return { ensured: false, skipped: true }; }
 
-  startWebhookAuthMonitor(sessionName) {
-    const targetSession = sessionName || this.sessionName;
-    if (this._logoutLocked || !this._autoManageEnabled) return;
-    return this.webhookManager.startWebhookAuthMonitor(
-      targetSession,
-      (sess) => this._getSessionInfo(sess),
-      (ms) => this._sleep(ms)
-    );
-  }
+  startWebhookAuthMonitor() { /* disabled */ }
 
-  async ensureWebhookConfigured(sessionName) {
-    const targetSession = sessionName || this.sessionName;
-    if (this._logoutLocked || !this._autoManageEnabled) return { ensured: false, skipped: true, reason: 'locked' };
-    return this.webhookManager.ensureWebhookConfigured(
-      targetSession,
-      (sess) => this._getSessionInfo(sess),
-      (ms) => this._sleep(ms),
-      (sess, sleepFn) => this.sessionManager.waitForStartCompletion(30000, sleepFn)
-    );
-  }
+  async ensureWebhookConfigured() { return { ensured: false, skipped: true }; }
 
-  async configureWahaEventsWebhook() {
-    return this.webhookManager.configureWahaEventsWebhook();
-  }
+  async configureWahaEventsWebhook() { return { ensured: false, skipped: true }; }
 
   // Helper methods that coordinate between modules
   _resetCaches() {
     this.sessionManager.resetCaches();
-    if (typeof this.webhookManager.resetWebhookCaches === 'function') {
-      this.webhookManager.resetWebhookCaches();
-    }
   }
 
   _safeStartWebhookMonitor() {
-    try {
-      if (!this._logoutLocked && this._autoManageEnabled) this.startWebhookAuthMonitor(this.sessionName);
-    } catch (error) {
-      console.log('Safe webhook monitor start failed (non-critical):', error.message);
-    }
+    // disabled
   }
 
   _safeEnsureWebhook() {
-    try {
-      if (this._logoutLocked || !this._autoManageEnabled) return;
-      this.ensureWebhookConfigured(this.sessionName).catch(error => {
-        console.log('Safe webhook ensure failed (non-critical):', error.message);
-      });
-    } catch (error) {
-      console.log('Safe webhook ensure failed (non-critical):', error.message);
-    }
+    // disabled
   }
 
   _sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
-  // Additional helper methods for backward compatibility
-  async _handleSessionStatus() {
-    return this.qrManager.handleSessionStatus(
-      () => this.sessionManager.getSessionInfo(),
-      () => this._safeStartWebhookMonitor(),
-      (sessionName, context) => this.sessionManager.attemptStartWithBackoff(sessionName, context)
-    );
-  }
-
-  async _pollForQRCode() {
-    return this.qrManager.pollForQRCode(
-      (lastStatus) => this.qrManager.checkSessionStatus(
-        lastStatus,
-        () => this.sessionManager.getSessionInfo()
-      ),
-      (sessionName, context) => this.sessionManager.attemptStartWithBackoff(sessionName, context),
-      (ms) => this._sleep(ms)
-    );
-  }
-
-  async _checkSessionStatus(lastStatus) {
-    return this.qrManager.checkSessionStatus(
-      lastStatus,
-      () => this.sessionManager.getSessionInfo()
-    );
-  }
-
-  async _fetchQRCode() {
-    return this.qrManager.fetchQRCode();
-  }
-
-  async _startSessionIfNeeded(sess) {
-    return this.sessionManager.startSessionIfNeeded(sess);
-  }
-
+  // Additional helper methods (guarded start only)
   async _startSessionIfNeededGuarded(sess) {
     if (this._logoutLocked) {
-      console.log('Start session skipped: session is logout-locked');
+      logger.info('Session', 'Start session skipped: session is logout-locked');
       return;
     }
     return this.sessionManager.startSessionIfNeeded(sess);
   }
 
-  async _getSessionStatusSafe() {
-    return this.sessionManager.getSessionStatusSafe();
-  }
-
-  async _sendTypingRequest(endpoint, chatId) {
-    return this.messaging._sendTypingRequest(chatId, endpoint === 'start');
-  }
-
-  async _handleSessionCreateError(createError, sessionData) {
-    const webhookUrl = this.getEventsWebhookUrl();
-    const events = this.getRequiredEvents();
-    
-    return this.sessionManager.handleSessionCreateError(
-      createError,
-      webhookUrl,
-      events,
-      () => this.sessionManager.startSession(),
-      (url, evts) => this.webhookManager.configureWebhook(url, evts)
-    );
-  }
-
-  async _waitForStartCompletion(sess) {
-    return this.sessionManager.waitForStartCompletion(30000, (ms) => this._sleep(ms));
-  }
-
-  async _getAuthenticatedSessionStatus(sess) {
-    return this.sessionManager.getAuthenticatedSessionStatus();
-  }
-
-  async _isWebhookCached(sess, candidateUrls, requiredEvents) {
-    return this.webhookManager.isWebhookCached(sess, candidateUrls, requiredEvents);
-  }
-
-  async _configureViaSessionUpdate(sess, candidateUrls, requiredEvents) {
-    return this.webhookManager.configureViaSessionUpdate(sess, candidateUrls, requiredEvents);
-  }
-
-  async _configureViaWebhooksEndpoint(sess, candidateUrls, requiredEvents) {
-    return this.webhookManager.configureViaWebhooksEndpoint(sess, candidateUrls, requiredEvents);
-  }
-
-  async _configureViaConfigEndpoint(sess, webhookUrl, requiredEvents) {
-    return this.webhookManager.configureViaConfigEndpoint(sess, webhookUrl, requiredEvents);
-  }
-
-  async _verifyWebhookConfig(sess, candidateUrls) {
-    return this.webhookManager.verifyWebhookConfig(sess, candidateUrls);
-  }
-
-  async _verifyWebhookViaEndpoint(sess, candidateUrls) {
-    return this.webhookManager.verifyWebhookViaEndpoint(sess, candidateUrls);
-  }
-
-  async _attemptStartWithBackoff(sessionName, reason) {
-    return this.sessionManager.attemptStartWithBackoff(sessionName, reason);
-  }
-
   async _attemptStartWithBackoffGuarded(sessionName, reason) {
     if (this._logoutLocked) {
-      console.log(`Attempt start skipped (${reason}): session is logout-locked`);
+      logger.info('Session', `Attempt start skipped (${reason}): session is logout-locked`);
       return;
     }
     return this.sessionManager.attemptStartWithBackoff(sessionName, reason);
@@ -497,7 +339,6 @@ class WAHAService {
   async stopAndLockSession(wait = true) {
     this._logoutLocked = true;
     this._autoManageEnabled = false;
-    try { this.webhookManager.resetWebhookCaches(); } catch (_) {}
     try {
       const result = await this.sessionManager.stopSession();
       if (wait) {

@@ -4,6 +4,7 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const logger = require('./utils/logger');
 
 /**
  * Startup script for WhatsApp AI Bot
@@ -24,14 +25,14 @@ class BotStarter {
    * Main startup function
    */
   async start() {
-    console.log('🤖 WhatsApp AI Bot Startup Script');
-    console.log('==================================\n');
+    logger.info('Startup', '🤖 WhatsApp AI Bot Startup Script');
+    logger.info('Startup', '==================================\n');
 
     try {
       await this.runPreflightChecks();
       await this.startServer();
     } catch (error) {
-      console.error('❌ Startup failed:', error.message);
+      logger.error('Startup', 'Startup failed', error);
       process.exit(1);
     }
   }
@@ -40,14 +41,14 @@ class BotStarter {
    * Run all preflight checks
    */
   async runPreflightChecks() {
-    console.log('🔍 Running preflight checks...\n');
+    logger.info('Preflight', '🔍 Running preflight checks...\n');
 
     await this.checkNodeVersion();
     await this.checkDependencies();
     await this.checkEnvironment();
     await this.checkWahaConnection();
 
-    console.log('\n✅ All preflight checks passed!\n');
+    logger.info('Preflight', '\n✅ All preflight checks passed!\n');
   }
 
   /**
@@ -58,7 +59,9 @@ class BotStarter {
     const majorVersion = parseInt(nodeVersion.slice(1).split('.')[0]);
 
     if (majorVersion >= 18) {
-      console.log(`✅ Node.js version: ${nodeVersion}`);
+      if (logger.isLevelEnabled('DEBUG')) {
+        logger.info('NodeCheck', `✅ Node.js version: ${nodeVersion}`);
+      }
       this.checks.nodeVersion = true;
     } else {
       throw new Error(`Node.js 18+ required, found ${nodeVersion}`);
@@ -77,10 +80,12 @@ class BotStarter {
     }
 
     if (!fs.existsSync(nodeModulesPath)) {
-      console.log('⚠️  Dependencies not installed, installing now...');
+      logger.warning('Dependencies', '⚠️  Dependencies not installed, installing now...');
       await this.installDependencies();
     } else {
-      console.log('✅ Dependencies installed');
+      if (logger.isLevelEnabled('DEBUG')) {
+        logger.info('Dependencies', '✅ Dependencies installed');
+      }
     }
 
     this.checks.dependencies = true;
@@ -98,7 +103,7 @@ class BotStarter {
 
       npm.on('close', (code) => {
         if (code === 0) {
-          console.log('✅ Dependencies installed successfully');
+          logger.info('Dependencies', '✅ Dependencies installed successfully');
           resolve();
         } else {
           reject(new Error(`npm install failed with code ${code}`));
@@ -118,9 +123,11 @@ class BotStarter {
     const envPath = path.join(__dirname, '.env');
 
     if (!fs.existsSync(envPath)) {
-      console.log('⚠️  .env file not found, using default configuration');
+      logger.warning('Environment', '⚠️  .env file not found, using default configuration');
     } else {
-      console.log('✅ Environment file found');
+      if (logger.isLevelEnabled('DEBUG')) {
+        logger.info('Environment', '✅ Environment file found');
+      }
     }
 
     // Load environment variables
@@ -131,10 +138,12 @@ class BotStarter {
     const missing = required.filter(key => !process.env[key]);
 
     if (missing.length > 0) {
-      console.log(`⚠️  Missing environment variables: ${missing.join(', ')}`);
-      console.log('   Using default values where possible');
+      logger.warning('Environment', `⚠️  Missing environment variables: ${missing.join(', ')}`);
+      logger.warning('Environment', '   Using default values where possible');
     } else {
-      console.log('✅ Environment configuration valid');
+      if (logger.isLevelEnabled('DEBUG')) {
+        logger.info('Environment', '✅ Environment configuration valid');
+      }
     }
 
     this.checks.environment = true;
@@ -149,13 +158,15 @@ class BotStarter {
     try {
       // Use a stable JSON endpoint; /health returns 422 in some WAHA builds
       await this.makeHttpRequest(wahaUrl + '/api/sessions', 5000);
-      console.log('✅ WAHA server is running');
+      if (logger.isLevelEnabled('DEBUG')) {
+        logger.info('WAHA', '✅ WAHA server is running');
+      }
       this.checks.wahaConnection = true;
     } catch (error) {
-      console.log('⚠️  WAHA server not accessible');
-      console.log(`   Expected at: ${wahaUrl}`);
-      console.log('   Please ensure WAHA is running before starting the bot');
-      console.log('   You can start WAHA with: docker run -p 3000:3000 devlikeapro/waha');
+      logger.warning('WAHA', '⚠️  WAHA server not accessible');
+      logger.warning('WAHA', `   Expected at: ${wahaUrl}`);
+      logger.warning('WAHA', '   Please ensure WAHA is running before starting the bot');
+      logger.warning('WAHA', '   You can start WAHA with: docker run -p 3000:3000 devlikeapro/waha');
       // Don't fail startup, just warn
     }
   }
@@ -184,7 +195,7 @@ class BotStarter {
    * Start the main server
    */
   async startServer() {
-    console.log('🚀 Starting WhatsApp AI Bot server...\n');
+    logger.info('Server', '🚀 Starting WhatsApp AI Bot server...\n');
 
     const server = spawn('node', ['server.js'], {
       stdio: 'inherit',
@@ -192,19 +203,19 @@ class BotStarter {
     });
 
     server.on('error', (error) => {
-      console.error('❌ Failed to start server:', error.message);
+      logger.error('Server', 'Failed to start server', error);
       process.exit(1);
     });
 
     // Handle graceful shutdown
     process.on('SIGINT', () => {
-      console.log('\n🛑 Shutting down gracefully...');
+      logger.info('Server', '\n🛑 Shutting down gracefully...');
       server.kill('SIGINT');
       process.exit(0);
     });
 
     process.on('SIGTERM', () => {
-      console.log('\n🛑 Shutting down gracefully...');
+      logger.info('Server', '\n🛑 Shutting down gracefully...');
       server.kill('SIGTERM');
       process.exit(0);
     });
@@ -214,12 +225,12 @@ class BotStarter {
    * Print startup summary
    */
   printSummary() {
-    console.log('\n📋 Startup Summary:');
-    console.log('==================');
+    logger.info('Summary', '\n📋 Startup Summary:');
+    logger.info('Summary', '==================');
     Object.entries(this.checks).forEach(([check, passed]) => {
-      console.log(`${passed ? '✅' : '❌'} ${check}`);
+      logger.info('Summary', `${passed ? '✅' : '❌'} ${check}`);
     });
-    console.log('');
+    logger.info('Summary', '');
   }
 }
 
@@ -227,7 +238,7 @@ class BotStarter {
 if (require.main === module) {
   const starter = new BotStarter();
   starter.start().catch((error) => {
-    console.error('❌ Startup failed:', error.message);
+    logger.error('Main', 'Startup failed', error);
     process.exit(1);
   });
 }

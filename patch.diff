@@ -1,0 +1,85 @@
+*** Begin Patch
+*** Add File: utils/logger.js
++const fs = require('fs');
++const path = require('path');
++let wt = { isMainThread: true, threadId: 0 };
++try { wt = require('worker_threads'); } catch (_) {}
++
++const COLORS = { debug: '\x1b[36m', info: '\x1b[32m', warning: '\x1b[33m', reset: '\x1b[0m' };
++const LEVELS = { debug: 10, info: 20, warning: 30 };
++
++class Logger {
++  constructor(cfg = {}) {
++    this.level = this._lv(cfg.level || 'info');
++    this.filePath = cfg.filePath || path.join(__dirname, '..', 'logs', 'app.log');
++    this.maxBytes = Math.max(1024, Number(cfg.maxBytes) || 1024 * 1024);
++    this.console = cfg.console !== false;
++    this.file = cfg.file !== false;
++    this.tid = `${wt.isMainThread ? 'main' : 'w' + wt.threadId}:${process.pid}`;
++    this.fd = null; this.size = 0;
++    this._initFile();
++  }
++  _lv(l) { return LEVELS[String(l).toLowerCase()] || LEVELS.info; }
++  _initFile() {
++    if (!this.file) return;
++    try {
++      const dir = path.dirname(this.filePath);
++      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
++      if (fs.existsSync(this.filePath)) this.size = fs.statSync(this.filePath).size; else this.size = 0;
++      this.fd = fs.openSync(this.filePath, 'a');
++    } catch (e) {
++      this.file = false; // disable file logging on failure
++      console.warn('Logger file init failed:', e.message);
++    }
++  }
++  setLevel(lvl) { this.level = this._lv(lvl); }
++  setConfig(cfg={}) {
++    if (cfg.level) this.level = this._lv(cfg.level);
++    if (cfg.maxBytes) this.maxBytes = Math.max(1024, Number(cfg.maxBytes));
++    if (cfg.filePath && cfg.filePath !== this.filePath) {
++      try { if (this.fd) fs.closeSync(this.fd); } catch (_) {}
++      this.filePath = cfg.filePath; this.fd = null; this.size = 0; this.file = true; this._initFile();
++    }
++    if (typeof cfg.console === 'boolean') this.console = cfg.console;
++    if (typeof cfg.file === 'boolean') this.file = cfg.file;
++  }
++  _fmt(level, args) {
++    const ts = new Date().toISOString();
++    const msg = args.map(a => (typeof a === 'string' ? a : (()=>{ try { return JSON.stringify(a); } catch { return String(a); }})())).join(' ');
++    return `${ts} [${this.tid}] ${level.toUpperCase()}: ${msg}`;
++  }
++  _rotateIfNeeded(addBytes) {
++    if (!this.file || !this.fd) return;
++    if (this.size + addBytes <= this.maxBytes) return;
++    try { fs.closeSync(this.fd); } catch (_) {}
++    const ts = new Date().toISOString().replace(/[:.]/g,'-');
++    const bak = `${this.filePath}.${ts}`;
++    try { if (fs.existsSync(this.filePath)) fs.renameSync(this.filePath, bak); } catch (e) { /* ignore */ }
++    this.fd = fs.openSync(this.filePath, 'a'); this.size = 0;
++  }
++  _write(line, level) {
++    const plain = line + '\n';
++    if (this.console) {
++      const color = level==='debug'?COLORS.debug: level==='info'?COLORS.info: COLORS.warning;
++      try { process.stdout.write(`${color}${plain}${COLORS.reset}`); } catch (_) { /* ignore */ }
++    }
++    if (this.file && this.fd) {
++      const buf = Buffer.from(plain);
++      this._rotateIfNeeded(buf.length);
++      try { this.size += fs.writeSync(this.fd, buf, 0, buf.length); } catch (e) { /* disable on error */ this.file = false; console.warn('Logger write failed:', e.message); }
++    }
++  }
++  debug(...a){ if (this.level <= LEVELS.debug) this._write(this._fmt('debug', a), 'debug'); }
++  info(...a){ if (this.level <= LEVELS.info) this._write(this._fmt('info', a), 'info'); }
++  warning(...a){ if (this.level <= LEVELS.warning) this._write(this._fmt('warning', a), 'warning'); }
++}
++
++let defaultLogger = null;
++function initializeLogger(cfg={}){
++  defaultLogger = new Logger(cfg);
++  return defaultLogger;
++}
++
++module.exports = { Logger, initializeLogger, get logger(){ if (!defaultLogger) defaultLogger = new Logger(); return defaultLogger; } };
++
+*** End Patch

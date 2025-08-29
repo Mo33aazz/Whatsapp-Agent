@@ -1,4 +1,5 @@
 const httpClient = require('../utils/httpClient');
+const logger = require('../utils/logger');
 
 class WAHAMessaging {
   constructor(baseURL, sessionName) {
@@ -8,43 +9,54 @@ class WAHAMessaging {
 
   // Message sending
   async sendMessage(to, text, options = {}) {
-    try {
-      console.log(`Sending message to ${to}:`, text.substring(0, 100) + (text.length > 100 ? '...' : ''));
-      
-      const messageData = {
-        chatId: to,
-        text: text,
-        session: this.sessionName,
-        ...options
-      };
-      
-      const response = await httpClient.post(
+    const preview = (text || '').toString();
+    logger.info('Messaging', `Sending message to ${to}`, { preview: preview.substring(0, 100) + (preview.length > 100 ? '...' : '') });
+    const messageData = {
+      chatId: to,
+      text: text,
+      session: this.sessionName,
+      ...options
+    };
+
+    const attempt = async () => {
+      return httpClient.post(
         `${this.baseURL}/api/sendText`,
         messageData,
         {
           timeout: 30000,
-          headers: {
-            'Content-Type': 'application/json'
-          }
+          headers: { 'Content-Type': 'application/json' }
         }
       );
-      
-      console.log('Message sent successfully:', response.data);
-      return response.data;
-    } catch (error) {
-      console.error('Error sending message:', error.message);
-      if (error.response) {
-        console.error('Response status:', error.response.status);
-        console.error('Response data:', error.response.data);
+    };
+
+    let lastErr;
+    const maxRetries = 2;
+    for (let i = 0; i <= maxRetries; i++) {
+      try {
+        const response = await attempt();
+        logger.info('Messaging', 'Message sent successfully', { data: response.data });
+        return response.data;
+      } catch (error) {
+        lastErr = error;
+        const status = error?.response?.status;
+        const retriable = !status || status >= 500 || error.code === 'ECONNABORTED' || error.code === 'ECONNRESET';
+        logger.warn('Messaging', `Error sending message (attempt ${i + 1}/${maxRetries + 1})`, { error: error.message });
+        if (!retriable || i === maxRetries) break;
+        const delay = 500 * Math.pow(2, i);
+        await new Promise(r => setTimeout(r, delay));
       }
-      throw new Error(`Failed to send message: ${error.message}`);
     }
+    if (lastErr && lastErr.response) {
+      logger.error('Response status', 'Messaging', { status: lastErr.response.status });
+        logger.error('Response data', 'Messaging', { data: lastErr.response.data });
+    }
+    throw new Error(`Failed to send message: ${lastErr ? lastErr.message : 'unknown error'}`);
   }
 
   // Typing indicators
   async startTyping(chatId) {
     try {
-      console.log(`Starting typing indicator for chat: ${chatId}`);
+      logger.debug('Messaging', `Starting typing indicator for chat: ${chatId}`);
       // Use WAHA ChattingController_startTyping
       await httpClient.post(
         `${this.baseURL}/api/startTyping`,
@@ -59,14 +71,14 @@ class WAHAMessaging {
       return { result: true };
     } catch (error) {
       // Do not throw to avoid breaking message flow if typing fails
-      console.warn(`Error starting typing for ${chatId}:`, error.message);
+      logger.warn('Messaging', `Error starting typing for ${chatId}`, { error: error.message });
       return { result: false, error: error.message };
     }
   }
 
   async stopTyping(chatId) {
     try {
-      console.log(`Stopping typing indicator for chat: ${chatId}`);
+      logger.debug('Messaging', `Stopping typing indicator for chat: ${chatId}`);
       // Use WAHA ChattingController_stopTyping
       await httpClient.post(
         `${this.baseURL}/api/stopTyping`,
@@ -81,7 +93,7 @@ class WAHAMessaging {
       return { result: true };
     } catch (error) {
       // Do not throw to avoid breaking message flow if typing fails
-      console.warn(`Error stopping typing for ${chatId}:`, error.message);
+      logger.warn('Messaging', `Error stopping typing for ${chatId}`, { error: error.message });
       return { result: false, error: error.message };
     }
   }
@@ -94,7 +106,7 @@ class WAHAMessaging {
   // Advanced messaging methods
   async sendImage(to, imageUrl, caption = '', options = {}) {
     try {
-      console.log(`Sending image to ${to}:`, imageUrl);
+      logger.info('Messaging', `Sending image to ${to}`, { imageUrl });
       
       const messageData = {
         chatId: to,
@@ -117,17 +129,17 @@ class WAHAMessaging {
         }
       );
       
-      console.log('Image sent successfully:', response.data);
+      logger.info('Messaging', 'Image sent successfully', { data: response.data });
       return response.data;
     } catch (error) {
-      console.error('Error sending image:', error.message);
+      logger.error('Error sending image', 'Messaging', { error: error.message });
       throw new Error(`Failed to send image: ${error.message}`);
     }
   }
 
   async sendDocument(to, documentUrl, filename = '', caption = '', options = {}) {
     try {
-      console.log(`Sending document to ${to}:`, documentUrl);
+      logger.info('Messaging', `Sending document to ${to}`, { documentUrl });
       
       const messageData = {
         chatId: to,
@@ -151,17 +163,17 @@ class WAHAMessaging {
         }
       );
       
-      console.log('Document sent successfully:', response.data);
+      logger.info('Messaging', 'Document sent successfully', { data: response.data });
       return response.data;
     } catch (error) {
-      console.error('Error sending document:', error.message);
+      logger.error('Error sending document', 'Messaging', { error: error.message });
       throw new Error(`Failed to send document: ${error.message}`);
     }
   }
 
   async sendAudio(to, audioUrl, options = {}) {
     try {
-      console.log(`Sending audio to ${to}:`, audioUrl);
+      logger.info('Messaging', `Sending audio to ${to}`, { audioUrl });
       
       const messageData = {
         chatId: to,
@@ -183,17 +195,17 @@ class WAHAMessaging {
         }
       );
       
-      console.log('Audio sent successfully:', response.data);
+      logger.info('Messaging', 'Audio sent successfully', { data: response.data });
       return response.data;
     } catch (error) {
-      console.error('Error sending audio:', error.message);
+      logger.error('Error sending audio', 'Messaging', { error: error.message });
       throw new Error(`Failed to send audio: ${error.message}`);
     }
   }
 
   async sendLocation(to, latitude, longitude, name = '', address = '', options = {}) {
     try {
-      console.log(`Sending location to ${to}:`, { latitude, longitude, name });
+      logger.info('Messaging', `Sending location to ${to}`, { latitude, longitude, name });
       
       const messageData = {
         chatId: to,
@@ -216,17 +228,17 @@ class WAHAMessaging {
         }
       );
       
-      console.log('Location sent successfully:', response.data);
+      logger.info('Messaging', 'Location sent successfully', { data: response.data });
       return response.data;
     } catch (error) {
-      console.error('Error sending location:', error.message);
+      logger.error('Error sending location', 'Messaging', { error: error.message });
       throw new Error(`Failed to send location: ${error.message}`);
     }
   }
 
   async sendContact(to, contact, options = {}) {
     try {
-      console.log(`Sending contact to ${to}:`, contact.name || contact.phone);
+      logger.info('Messaging', `Sending contact to ${to}`, { contact: contact.name || contact.phone });
       
       const messageData = {
         chatId: to,
@@ -246,10 +258,10 @@ class WAHAMessaging {
         }
       );
       
-      console.log('Contact sent successfully:', response.data);
+      logger.info('Messaging', 'Contact sent successfully', { data: response.data });
       return response.data;
     } catch (error) {
-      console.error('Error sending contact:', error.message);
+      logger.error('Error sending contact', 'Messaging', { error: error.message });
       throw new Error(`Failed to send contact: ${error.message}`);
     }
   }
@@ -257,7 +269,7 @@ class WAHAMessaging {
   // Message status and management
   async markAsRead(chatId, messageId) {
     try {
-      console.log(`Marking message as read in chat ${chatId}:`, messageId);
+      logger.debug('Messaging', `Marking message as read in chat ${chatId}`, { messageId });
       // Use WAHA ChattingController_sendSeen (SendSeenRequest)
       const body = {
         chatId,
@@ -274,17 +286,17 @@ class WAHAMessaging {
           }
         }
       );
-      console.log('Sent seen/read receipt:', response.data);
+      logger.debug('Messaging', 'Sent seen/read receipt', { data: response.data });
       return response.data;
     } catch (error) {
-      console.error('Error marking message as read:', error.message);
+      logger.error('Error marking message as read', 'Messaging', { error: error.message });
       throw error;
     }
   }
 
   async deleteMessage(chatId, messageId, forEveryone = false) {
     try {
-      console.log(`Deleting message in chat ${chatId}:`, messageId, forEveryone ? '(for everyone)' : '(for me)');
+      logger.info('Messaging', `Deleting message in chat ${chatId}`, { messageId, forEveryone: forEveryone ? 'for everyone' : 'for me' });
       
       const response = await httpClient.delete(
         `${this.baseURL}/api/${this.sessionName}/chats/${chatId}/messages/${messageId}`,
@@ -297,10 +309,10 @@ class WAHAMessaging {
         }
       );
       
-      console.log('Message deleted:', response.data);
+      logger.info('Messaging', 'Message deleted', { data: response.data });
       return response.data;
     } catch (error) {
-      console.error('Error deleting message:', error.message);
+      logger.error('Error deleting message', 'Messaging', { error: error.message });
       throw error;
     }
   }
@@ -308,7 +320,7 @@ class WAHAMessaging {
   // Chat management
   async getChatMessages(chatId, limit = 50, offset = 0) {
     try {
-      console.log(`Getting messages for chat ${chatId} (limit: ${limit}, offset: ${offset})`);
+      logger.debug('Messaging', `Getting messages for chat ${chatId}`, { limit, offset });
       
       const response = await httpClient.get(
         `${this.baseURL}/api/${this.sessionName}/chats/${chatId}/messages`,
@@ -321,17 +333,17 @@ class WAHAMessaging {
         }
       );
       
-      console.log(`Retrieved ${response.data?.length || 0} messages for chat ${chatId}`);
+      logger.debug('Messaging', `Retrieved messages for chat ${chatId}`, { count: response.data?.length || 0 });
       return response.data;
     } catch (error) {
-      console.error('Error getting chat messages:', error.message);
+      logger.error('Error getting chat messages', 'Messaging', { error: error.message });
       throw error;
     }
   }
 
   async getChatInfo(chatId) {
     try {
-      console.log(`Getting chat info for: ${chatId}`);
+      logger.info('Messaging', `Getting chat info for: ${chatId}`);
       
       const response = await httpClient.get(
         `${this.baseURL}/api/${this.sessionName}/chats/${chatId}`,
@@ -343,10 +355,10 @@ class WAHAMessaging {
         }
       );
       
-      console.log('Chat info retrieved:', response.data?.name || chatId);
+      logger.info('Messaging', 'Chat info retrieved', { name: response.data?.name || chatId });
       return response.data;
     } catch (error) {
-      console.error('Error getting chat info:', error.message);
+      logger.error('Error getting chat info', 'Messaging', { error: error.message });
       throw error;
     }
   }
@@ -358,12 +370,12 @@ class WAHAMessaging {
       await this._sleep(durationMs);
       await this.stopTyping(chatId);
     } catch (error) {
-      console.error('Error in typing with duration:', error.message);
+      logger.error('Error in typing with duration', 'Messaging', { error: error.message });
       // Try to stop typing even if start failed
       try {
         await this.stopTyping(chatId);
       } catch (stopError) {
-        console.error('Error stopping typing after failure:', stopError.message);
+        logger.error('Error stopping typing after failure', 'Messaging', { error: stopError.message });
       }
       throw error;
     }

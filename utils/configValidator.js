@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const logger = require('./logger');
 
 class ConfigValidator {
   /**
@@ -15,9 +16,9 @@ class ConfigValidator {
       if (!fs.existsSync(dir)) {
         try {
           fs.mkdirSync(dir, { recursive: true });
-          console.log(`Created directory: ${dir}`);
+          logger.info('Config', `Created directory: ${dir}`);
         } catch (error) {
-          console.error(`Failed to create directory ${dir}:`, error.message);
+          logger.error(`Failed to create directory ${dir}`, 'Config', { dir, error: error.message });
           throw error;
         }
       }
@@ -62,7 +63,7 @@ class ConfigValidator {
 
     // Ensure it looks like a URL; if not, fall back to sensible default
     if (typeof wahaUrl !== 'string' || (!wahaUrl.startsWith('http://') && !wahaUrl.startsWith('https://'))) {
-      console.warn('Warning: WAHA_URL is missing or invalid. Falling back to http://localhost:3000');
+      logger.warn('Config', 'WAHA_URL is missing or invalid. Falling back to http://localhost:3000');
       wahaUrl = 'http://localhost:3000';
     }
 
@@ -72,7 +73,7 @@ class ConfigValidator {
       // eslint-disable-next-line no-new
       new URL(wahaUrl);
     } catch (error) {
-      console.warn(`Warning: Invalid WAHA_URL format '${wahaUrl}'. Using http://localhost:3000`);
+      logger.warn('Config', `Invalid WAHA_URL format '${wahaUrl}'. Using http://localhost:3000`);
       wahaUrl = 'http://localhost:3000';
     }
 
@@ -92,7 +93,7 @@ class ConfigValidator {
     
     // API key is optional at startup but required for AI functionality
     if (apiKey && !apiKey.startsWith('sk-')) {
-      console.warn('Warning: OPENROUTER_API_KEY should start with "sk-"');
+      logger.warn('Config', 'OPENROUTER_API_KEY should start with "sk-"');
     }
     
     return {
@@ -176,16 +177,16 @@ class ConfigValidator {
         logLevel: process.env.LOG_LEVEL || 'info'
       };
       
-      console.log('Configuration validation successful');
+      logger.info('Config', 'Configuration validation successful');
       
       // Log warnings for missing optional configurations
       if (!config.openrouter.configured) {
-        console.warn('Warning: OpenRouter API key not configured. AI functionality will be disabled.');
+        logger.warn('Config', 'OpenRouter API key not configured. AI functionality will be disabled.');
       }
       
       return config;
     } catch (error) {
-      console.error('Configuration validation failed:', error.message);
+      logger.error('Configuration validation failed', 'Config', { error: error.message });
       throw error;
     }
   }
@@ -194,18 +195,24 @@ class ConfigValidator {
    * Print configuration summary
    */
   static printConfigSummary(config) {
-    console.log('\n=== WhatsApp AI Bot Configuration ===');
-    console.log(`Port: ${config.port}`);
-    console.log(`Environment: ${config.nodeEnv}`);
-    console.log(`WAHA URL: ${config.waha.url}`);
-    console.log(`WAHA Session: ${config.waha.sessionName}`);
-    console.log(`OpenRouter Configured: ${config.openrouter.configured ? 'Yes' : 'No'}`);
-    console.log(`OpenRouter Model: ${config.openrouter.model}`);
-    // Clarify the actual events endpoint path
-    console.log(`Events Endpoint Path: ${config.webhook.path}`);
-    console.log(`CORS Origin: ${config.security.corsOrigin}`);
-    console.log(`Rate Limit: ${config.security.rateLimit.max} requests per ${config.security.rateLimit.windowMs}ms`);
-    console.log('=====================================\n');
+    if (logger.isLevelEnabled('DEBUG')) {
+      logger.info('Config', '\n=== WhatsApp AI Bot Configuration ===');
+      logger.info('Config', `Port: ${config.port}`);
+      logger.info('Config', `Environment: ${config.nodeEnv}`);
+      logger.info('Config', `WAHA URL: ${config.waha.url}`);
+      logger.info('Config', `WAHA Session: ${config.waha.sessionName}`);
+      logger.info('Config', `OpenRouter Configured: ${config.openrouter.configured ? 'Yes' : 'No'}`);
+      logger.info('Config', `OpenRouter Model: ${config.openrouter.model}`);
+      // Clarify the actual events endpoint path
+      logger.info('Config', `Events Endpoint Path: ${config.webhook.path}`);
+      logger.info('Config', `CORS Origin: ${config.security.corsOrigin}`);
+      logger.info('Config', `Rate Limit: ${config.security.rateLimit.max} requests per ${config.security.rateLimit.windowMs}ms`);
+      logger.info('Config', '=====================================\n');
+    } else {
+      // Compact summary for non-debug mode
+      const summary = `port=${config.port}, env=${config.nodeEnv}, waha=${config.waha.url}, session=${config.waha.sessionName}, openrouter=${config.openrouter.configured ? 'on' : 'off'}, eventsPath=${config.webhook.path}`;
+      logger.info('Config', `Configuration loaded (${summary})`);
+    }
   }
 }
 

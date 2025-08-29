@@ -1,5 +1,6 @@
 const httpClient = require('../utils/httpClient');
 const memoryService = require('./memoryService');
+const logger = require('../utils/logger');
 
 class OpenRouterService {
   constructor() {
@@ -118,10 +119,10 @@ class OpenRouterService {
         throw new Error('No response generated from AI model');
       }
     } catch (error) {
-      console.error('Error generating AI response:', error.message);
+      logger.error('Error generating AI response', 'OpenRouter', { error: error.message });
       
       if (error.response) {
-        console.error('OpenRouter API Error:', {
+        logger.error('OpenRouter API Error', 'OpenRouter', {
           status: error.response.status,
           data: error.response.data
         });
@@ -172,7 +173,7 @@ class OpenRouterService {
 
       return response.status === 200;
     } catch (error) {
-      console.error('OpenRouter connection test failed:', error.message);
+      logger.error('OpenRouter connection test failed', 'OpenRouter', { error: error.message });
       return false;
     }
   }
@@ -203,7 +204,7 @@ class OpenRouterService {
 
       return response.data?.data || [];
     } catch (error) {
-      console.error('Error getting available models:', error.message);
+      logger.error('Error getting available models', 'OpenRouter', { error: error.message });
       return [];
     }
   }
@@ -258,7 +259,7 @@ class OpenRouterService {
         };
       }
     } catch (error) {
-      console.error('API key test failed:', error.message);
+      logger.error('API key test failed', 'OpenRouter', { error: error.message });
       
       if (error.response) {
         const status = error.response.status;
@@ -308,7 +309,7 @@ class OpenRouterService {
       const config = await memoryService.getConfig();
       return !!(config && config.openrouterApiKey && config.openrouterApiKey.trim());
     } catch (error) {
-      console.error('Error checking OpenRouter configuration:', error.message);
+      logger.error('Error checking OpenRouter configuration', 'OpenRouter', { error: error.message });
       return false;
     }
   }

@@ -140,7 +140,7 @@ Access the dashboard at `http://localhost:3001` to:
 | `WEBHOOK_PATH` | Webhook endpoint path | /webhook | No |
 | `RATE_LIMIT_WINDOW_MS` | Rate limit window | 60000 | No |
 | `RATE_LIMIT_MAX_REQUESTS` | Max requests per window | 100 | No |
-| `LOG_LEVEL` | Logging level | info | No |
+| `LOG_LEVEL` | Logging level (`debug`, `info`, `warning`, `error`) | info | No |
 | `CORS_ORIGIN` | CORS origin | * | No |
 | `HELMET_ENABLED` | Enable Helmet security | true | No |
 
@@ -208,6 +208,18 @@ WhatsApp Agent/
    ```bash
    LOG_LEVEL=debug npm start
    ```
+
+2. **Get or set log level at runtime:**
+   - Current level:
+     ```bash
+     curl http://localhost:3001/log-level
+     ```
+   - Set level (debug/info/warning/error):
+     ```bash
+     curl -X POST http://localhost:3001/log-level \
+       -H "Content-Type: application/json" \
+       -d '{"level":"debug"}'
+     ```
 
 2. **Check system health:**
    ```bash
