@@ -147,7 +147,8 @@ class BotStarter {
     const wahaUrl = process.env.WAHA_URL || 'http://localhost:3000';
 
     try {
-      await this.makeHttpRequest(wahaUrl + '/health', 5000);
+      // Use a stable JSON endpoint; /health returns 422 in some WAHA builds
+      await this.makeHttpRequest(wahaUrl + '/api/sessions', 5000);
       console.log('✅ WAHA server is running');
       this.checks.wahaConnection = true;
     } catch (error) {

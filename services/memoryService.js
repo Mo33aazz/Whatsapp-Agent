@@ -2,12 +2,21 @@ const fs = require('fs').promises;
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 
+// Module-level write buffer map to avoid 'this' binding issues
+const WRITE_BUFFERS = new Map();
+
 class MemoryService {
   constructor() {
     this.dataDir = path.join(__dirname, '..', 'data');
     this.configFile = path.join(this.dataDir, 'config.json');
     this.conversationsFile = path.join(this.dataDir, 'conversations.json');
     this.statusFile = path.join(this.dataDir, 'status.json');
+    // Append-only global message log (JSON Lines) for permanent storage
+    this.messagesLogFile = process.env.MEMORY_LOG_FILE_PATH
+      ? (path.isAbsolute(process.env.MEMORY_LOG_FILE_PATH)
+          ? process.env.MEMORY_LOG_FILE_PATH
+          : path.join(this.dataDir, path.basename(process.env.MEMORY_LOG_FILE_PATH)))
+      : path.join(this.dataDir, 'messages.jsonl');
     
     this.cache = {
       config: null,
@@ -34,6 +43,8 @@ class MemoryService {
       await this.syncConfigWithEnvironment();
       
       await this.ensureFileExists(this.conversationsFile, {});
+      // Migrate/sanitize conversations file if it has an unexpected shape
+      await this.migrateConversationsFileIfNeeded();
       
       await this.ensureFileExists(this.statusFile, {
         wahaConnected: false,
@@ -43,11 +54,55 @@ class MemoryService {
         uptime: '0h 0m',
         errors: []
       });
+
+      // Ensure permanent message log exists (JSONL)
+      await this.ensureFileExistsPlain(this.messagesLogFile, '');
       
       console.log('Memory service initialized successfully');
     } catch (error) {
       console.error('Error initializing memory service:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Ensure conversations storage has the expected object-map shape.
+   * Converts legacy/invalid array formats to an object keyed by userId.
+   */
+  async migrateConversationsFileIfNeeded() {
+    try {
+      const data = await this.readJsonFile(this.conversationsFile);
+      // If already an object (and not null/array), nothing to do
+      if (data && typeof data === 'object' && !Array.isArray(data)) {
+        return;
+      }
+
+      let migrated = {};
+      if (Array.isArray(data)) {
+        // Attempt to migrate an array of conversation objects into a map
+        for (const item of data) {
+          if (!item || typeof item !== 'object') continue;
+          const userId = item.userId || item.chatId || item.contact || item.phone || item.id;
+          if (!userId) continue;
+          migrated[userId] = {
+            sessionId: item.sessionId || 'default',
+            messages: Array.isArray(item.messages) ? item.messages : (Array.isArray(item.history) ? item.history : []),
+            createdAt: item.createdAt || new Date().toISOString(),
+            updatedAt: item.updatedAt || new Date().toISOString()
+          };
+        }
+      }
+
+      // If migration produced an empty object or source was invalid, normalize to {}
+      if (!migrated || typeof migrated !== 'object' || Array.isArray(migrated)) {
+        migrated = {};
+      }
+
+      await this.writeJsonFile(this.conversationsFile, migrated);
+      this.cache.conversations = migrated;
+      console.log('Conversations storage normalized to object-map format');
+    } catch (err) {
+      console.warn('Conversations file migration check failed:', err.message);
     }
   }
 
@@ -61,7 +116,8 @@ class MemoryService {
       aiModel: process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini',
       systemPrompt: process.env.SYSTEM_PROMPT || 'You are a helpful WhatsApp assistant.',
       wahaBaseUrl: process.env.WAHA_URL || 'http://localhost:3000',
-      webhookUrl: process.env.WEBHOOK_URL || 'http://localhost:5000/webhook',
+      // Default to WAHA events webhook URL pointing to host.docker.internal
+      webhookUrl: process.env.WEBHOOK_URL || 'http://host.docker.internal:3001/waha-events',
       lastUpdated: new Date().toISOString()
     };
   }
@@ -131,6 +187,56 @@ class MemoryService {
   }
 
   /**
+   * Ensure a plain text file exists (used for JSONL log)
+   * @param {string} filePath
+   * @param {string} initialContent
+   */
+  async ensureFileExistsPlain(filePath, initialContent = '') {
+    try {
+      await fs.access(filePath);
+    } catch (_) {
+      await fs.writeFile(filePath, initialContent);
+    }
+  }
+
+  /**
+   * Schedule a debounced write to a JSON file to reduce I/O churn
+   * @param {string} filePath
+   * @param {Object} data
+   * @param {number} delayMs
+   */
+  _scheduleWrite(filePath, data, delayMs = 200) {
+    // Always use module-level buffer map to ensure availability
+    let entry = WRITE_BUFFERS.get(filePath);
+    if (!entry) {
+      entry = { timer: null, inFlight: false, pending: false, data: null };
+      WRITE_BUFFERS.set(filePath, entry);
+    }
+    entry.data = data;
+    entry.pending = true;
+
+    const flush = async () => {
+      if (entry.inFlight) return;
+      entry.inFlight = true;
+      entry.pending = false;
+      const payload = entry.data;
+      try {
+        await fs.writeFile(filePath, JSON.stringify(payload, null, 2));
+      } catch (err) {
+        console.error(`Buffered write failed for ${filePath}:`, err);
+      } finally {
+        entry.inFlight = false;
+        if (entry.pending) {
+          setTimeout(flush, 0);
+        }
+      }
+    };
+
+    if (entry.timer) clearTimeout(entry.timer);
+    entry.timer = setTimeout(flush, delayMs);
+  }
+
+  /**
    * Read and parse JSON file
    * @param {string} filePath - Path to the JSON file
    * @returns {Promise<Object>} Parsed JSON content
@@ -138,7 +244,8 @@ class MemoryService {
   async readJsonFile(filePath) {
     try {
       const data = await fs.readFile(filePath, 'utf8');
-      return JSON.parse(data);
+      const parsed = JSON.parse(data);
+      return parsed === null ? {} : parsed;
     } catch (error) {
       console.error(`Error reading JSON file ${filePath}:`, error);
       return {};
@@ -176,7 +283,7 @@ class MemoryService {
    */
   async saveConfig(config) {
     this.cache.config = config;
-    await this.writeJsonFile(this.configFile, config);
+    this._scheduleWrite(this.configFile, config);
   }
 
   /**
@@ -232,10 +339,25 @@ class MemoryService {
     }
 
     this.cache.conversations = conversations;
-    await this.writeJsonFile(this.conversationsFile, conversations);
-    
-    // Update status
-    await this.updateStatus({ messagesProcessed: 1, lastMessageAt: new Date().toISOString() });
+    this._scheduleWrite(this.conversationsFile, conversations);
+
+    // Append to permanent JSONL message log
+    try {
+      const logRecord = {
+        id: message.id,
+        userId,
+        content,
+        type,
+        sender,
+        timestamp: message.timestamp
+      };
+      await fs.writeFile(this.messagesLogFile, JSON.stringify(logRecord) + "\n", { flag: 'a' });
+    } catch (err) {
+      console.warn('Failed to append to messages log:', err.message);
+    }
+
+    // Update status (buffered)
+    this.updateStatus({ messagesProcessed: 1, lastMessageAt: new Date().toISOString() }).catch(() => {});
   }
 
   /**
@@ -244,7 +366,12 @@ class MemoryService {
    */
   async getAllConversations() {
     if (!this.cache.conversations) {
-      this.cache.conversations = await this.readJsonFile(this.conversationsFile);
+      let conversations = await this.readJsonFile(this.conversationsFile);
+      // Harden against unexpected shapes at runtime
+      if (!conversations || typeof conversations !== 'object' || Array.isArray(conversations)) {
+        conversations = {};
+      }
+      this.cache.conversations = conversations;
     }
     return this.cache.conversations;
   }
@@ -280,7 +407,7 @@ class MemoryService {
     });
     
     this.cache.status = status;
-    await this.writeJsonFile(this.statusFile, status);
+    this._scheduleWrite(this.statusFile, status, 150);
   }
 
   /**
@@ -304,7 +431,7 @@ class MemoryService {
     }
     
     this.cache.status = status;
-    await this.writeJsonFile(this.statusFile, status);
+    this._scheduleWrite(this.statusFile, status, 150);
   }
 
   /**
@@ -316,6 +443,54 @@ class MemoryService {
       conversations: null,
       status: null
     };
+    // Clear buffered write state
+    try { WRITE_BUFFERS.clear(); } catch (_) {}
+  }
+
+  /**
+   * Read full conversation history for a user from the permanent JSONL log
+   * Note: This scans the entire log; for very large logs consider a DB.
+   * @param {string} userId
+   * @returns {Promise<Array<{id:string,content:string,type:string,sender:string,timestamp:string}>>}
+   */
+  async getFullConversationHistory(userId) {
+    try {
+      const data = await fs.readFile(this.messagesLogFile, 'utf8');
+      if (!data) return [];
+      const lines = data.split(/\r?\n/);
+      const history = [];
+      for (const line of lines) {
+        if (!line) continue;
+        try {
+          const rec = JSON.parse(line);
+          if (rec && rec.userId === userId) {
+            history.push({
+              id: rec.id,
+              content: rec.content,
+              type: rec.type,
+              sender: rec.sender,
+              timestamp: rec.timestamp
+            });
+          }
+        } catch (_) {
+          // skip bad line
+        }
+      }
+      return history;
+    } catch (err) {
+      console.warn('Failed to read messages log:', err.message);
+      return [];
+    }
+  }
+
+  /**
+   * Get last N messages for a user from the permanent log
+   * @param {string} userId
+   * @param {number} limit
+   */
+  async getRecentHistoryFromLog(userId, limit = 50) {
+    const all = await this.getFullConversationHistory(userId);
+    return all.slice(-Math.max(0, limit));
   }
 }
 

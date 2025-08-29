@@ -4,6 +4,11 @@ class WhatsAppBotDashboard {
         this.qrRefreshInterval = null;
         this.statusRefreshInterval = null;
         this.conversationsRefreshInterval = null;
+        this.isAuthenticated = false;
+        this.isEditingConfig = false;
+        this.sse = null;
+        this._models = [];
+        this._modelMenuState = { open: false, activeIndex: -1 };
         this.init();
     }
 
@@ -14,6 +19,7 @@ class WhatsAppBotDashboard {
         this.loadQRCode();
         this.loadStatus();
         this.loadConversations();
+        this.connectRealtimeUpdates();
     }
 
     setupEventListeners() {
@@ -23,10 +29,36 @@ class WhatsAppBotDashboard {
             configForm.addEventListener('submit', (e) => this.handleConfigSubmit(e));
         }
 
+        // Edit configuration button (when already configured)
+        const editBtn = document.getElementById('editConfigBtn');
+        if (editBtn) {
+            editBtn.addEventListener('click', () => {
+                this.isEditingConfig = true;
+                const success = document.getElementById('configSuccess');
+                const form = document.getElementById('configForm');
+                if (success) success.style.display = 'none';
+                if (form) form.style.display = 'block';
+                // Load current config into the form when entering edit mode
+                this.loadConfiguration();
+            });
+        }
+
+        // Cancel edit button
+        const cancelBtn = document.getElementById('cancelEditBtn');
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', () => {
+                this.isEditingConfig = false;
+                const success = document.getElementById('configSuccess');
+                const form = document.getElementById('configForm');
+                if (success) success.style.display = 'block';
+                if (form) form.style.display = 'none';
+            });
+        }
+
         // QR Code refresh button
-        const refreshQRBtn = document.getElementById('refreshQR');
-        if (refreshQRBtn) {
-            refreshQRBtn.addEventListener('click', () => this.loadQRCode());
+        const refreshQrBtn = document.getElementById('refreshQr');
+        if (refreshQrBtn) {
+            refreshQrBtn.addEventListener('click', () => this.loadQRCode());
         }
 
         // Test API button
@@ -41,31 +73,56 @@ class WhatsAppBotDashboard {
             clearConversationsBtn.addEventListener('click', () => this.clearConversations());
         }
 
+        // Refresh conversations button
+        const refreshConversationsBtn = document.getElementById('refreshConversations');
+        if (refreshConversationsBtn) {
+            refreshConversationsBtn.addEventListener('click', () => this.loadConversations());
+        }
+
         // Refresh status button
         const refreshStatusBtn = document.getElementById('refreshStatus');
         if (refreshStatusBtn) {
             refreshStatusBtn.addEventListener('click', () => this.loadStatus());
         }
 
+        // Logout button
+        const logoutBtn = document.getElementById('logoutBtn');
+        if (logoutBtn) {
+            logoutBtn.addEventListener('click', () => this.handleLogout());
+        }
+
         // Enhanced form validation and interaction
         this.setupFormValidation();
         this.setupAPIKeyToggle();
-        this.setupClearFormButton();
-        this.setupTestConnectionButton();
+        this.setupModelCombobox();
+        // Removed Clear Form and Test Connection buttons per request
     }
 
     setupFormValidation() {
         // API Key validation
-        const apiKeyInput = document.getElementById('openrouterApiKey');
+        const apiKeyInput = document.getElementById('apiKey');
         if (apiKeyInput) {
-            apiKeyInput.addEventListener('input', (e) => this.validateAPIKey(e.target));
+            apiKeyInput.addEventListener('input', (e) => {
+                this.validateAPIKey(e.target);
+                // Debounced fetch of model suggestions when API key changes
+                if (!this._debounceModels) this._debounceModels = this.debounce((val) => this.loadModelList(val), 600);
+                const val = (e.target.value || '').trim();
+                if (val) this._debounceModels(val);
+            });
             apiKeyInput.addEventListener('blur', (e) => this.validateAPIKey(e.target));
         }
 
-        // AI Model validation
-        const aiModelSelect = document.getElementById('aiModel');
-        if (aiModelSelect) {
-            aiModelSelect.addEventListener('change', (e) => this.validateAIModel(e.target));
+        // AI Model validation + dynamic suggestions
+        const aiModelInput = document.getElementById('aiModel');
+        if (aiModelInput) {
+            aiModelInput.addEventListener('input', (e) => {
+                this.validateAIModel(e.target);
+                // Debounced model list refresh when API key is typed
+                if (!this._debounceModels) this._debounceModels = this.debounce((val) => this.loadModelList(val), 600);
+                const apiKeyVal = (document.getElementById('apiKey')?.value || '').trim();
+                if (apiKeyVal) this._debounceModels(apiKeyVal);
+            });
+            aiModelInput.addEventListener('blur', (e) => this.validateAIModel(e.target));
         }
 
         // System Prompt validation
@@ -78,7 +135,7 @@ class WhatsAppBotDashboard {
 
     setupAPIKeyToggle() {
         const toggleBtn = document.getElementById('toggleApiKey');
-        const apiKeyInput = document.getElementById('openrouterApiKey');
+        const apiKeyInput = document.getElementById('apiKey');
         
         if (toggleBtn && apiKeyInput) {
             toggleBtn.addEventListener('click', () => {
@@ -107,7 +164,8 @@ class WhatsAppBotDashboard {
         try {
             const response = await fetch('/config');
             if (response.ok) {
-                const config = await response.json();
+                const payload = await response.json();
+                const config = payload?.config || payload;
                 this.populateConfigForm(config);
             }
         } catch (error) {
@@ -118,7 +176,7 @@ class WhatsAppBotDashboard {
 
     populateConfigForm(config) {
         const elements = {
-            'openrouterApiKey': config.openrouterApiKey || '',
+            'apiKey': config.openrouterApiKey || '',
             'aiModel': config.aiModel || 'openai/gpt-4o-mini',
             'systemPrompt': config.systemPrompt || 'You are a helpful AI assistant for WhatsApp. Be concise and friendly.',
             'wahaUrl': config.wahaUrl || 'http://localhost:3000',
@@ -127,13 +185,27 @@ class WhatsAppBotDashboard {
 
         Object.entries(elements).forEach(([id, value]) => {
             const element = document.getElementById(id);
-            if (element) {
+            if (!element) return;
+
+            if (id === 'apiKey') {
+                // If backend indicates the key is configured, don't prefill with mask
+                const isMasked = value === '***configured***';
+                if (isMasked) {
+                    element.value = '';
+                    element.placeholder = 'Leave empty to keep existing key';
+                    element.removeAttribute('required');
+                } else {
+                    element.value = value || '';
+                    element.setAttribute('required', 'required');
+                }
+                // Only validate if user-provided (non-empty)
+                if (element.value) this.validateAPIKey(element);
+            } else {
                 element.value = value;
-                // Trigger validation for populated fields
-                if (id === 'openrouterApiKey') {
-                    this.validateAPIKey(element);
-                } else if (id === 'aiModel') {
+                if (id === 'aiModel') {
                     this.validateAIModel(element);
+                    // Load model suggestions using saved API key
+                    this.loadModelList();
                 } else if (id === 'systemPrompt') {
                     this.validateSystemPrompt(element);
                 }
@@ -150,28 +222,60 @@ class WhatsAppBotDashboard {
             return;
         }
 
-        const submitBtn = document.getElementById('saveConfig');
+        const submitBtn = document.getElementById('saveConfigBtn');
         const formStatus = document.getElementById('formStatus');
         
-        // Show loading state
-        this.setButtonLoading(submitBtn, true, 'Saving...');
-        this.showFormStatus('Saving configuration...', 'info');
-        
         const formData = new FormData(e.target);
+        const apiKey = (formData.get('apiKey') || '').trim();
         const config = {
-            openrouterApiKey: formData.get('openrouterApiKey'),
             aiModel: formData.get('aiModel'),
             systemPrompt: formData.get('systemPrompt'),
             wahaUrl: formData.get('wahaUrl'),
             sessionName: formData.get('sessionName')
         };
+        if (apiKey) config.openrouterApiKey = apiKey;
 
+        // If user entered an API key, validate it first; otherwise skip validation
+        if (apiKey) {
+            this.setButtonLoading(submitBtn, true, 'Validating...');
+            this.showFormStatus('Validating API key...', 'info');
+            try {
+                const testResp = await fetch('/config/test-openrouter', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ openrouterApiKey: apiKey })
+                });
+                const testResult = await testResp.json();
+                if (!testResp.ok || !testResult.success) {
+                    const msg = testResult.message || 'API key validation failed';
+                    this.showToast(`Validation failed: ${msg}`, 'error');
+                    this.showFormStatus(`Validation failed: ${msg}`, 'error');
+                    this.setButtonState(submitBtn, 'error', 'Validation Failed');
+                    setTimeout(() => {
+                        this.setButtonLoading(submitBtn, false, 'Save Configuration');
+                    }, 2500);
+                    return;
+                }
+            } catch (err) {
+                console.error('Error validating API key:', err);
+                this.showToast('Failed to validate API key', 'error');
+                this.showFormStatus('Validation error occurred', 'error');
+                this.setButtonState(submitBtn, 'error', 'Validation Failed');
+                setTimeout(() => {
+                    this.setButtonLoading(submitBtn, false, 'Save Configuration');
+                }, 2500);
+                return;
+            }
+        }
+
+        // Save configuration (either after validation passed or with no API key change)
         try {
+            this.setButtonLoading(submitBtn, true, 'Saving...');
+            this.showFormStatus('Saving configuration...', 'info');
+
             const response = await fetch('/config', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(config)
             });
 
@@ -179,9 +283,8 @@ class WhatsAppBotDashboard {
                 this.showToast('Configuration saved successfully!', 'success');
                 this.showFormStatus('Configuration saved successfully!', 'success');
                 this.setButtonState(submitBtn, 'success', 'Saved!');
-                this.loadStatus(); // Refresh status after config change
-                
-                // Reset button state after 2 seconds
+                this.isEditingConfig = false;
+                this.loadStatus();
                 setTimeout(() => {
                     this.setButtonLoading(submitBtn, false, 'Save Configuration');
                     this.hideFormStatus();
@@ -191,19 +294,15 @@ class WhatsAppBotDashboard {
                 this.showToast(`Failed to save configuration: ${error.message}`, 'error');
                 this.showFormStatus(`Error: ${error.message}`, 'error');
                 this.setButtonState(submitBtn, 'error', 'Save Failed');
-                
-                // Reset button state after 3 seconds
                 setTimeout(() => {
                     this.setButtonLoading(submitBtn, false, 'Save Configuration');
                 }, 3000);
             }
         } catch (error) {
-            console.error('Error saving configuration:', error);
-            this.showToast('Failed to save configuration', 'error');
+            console.error('Error validating/saving configuration:', error);
+            this.showToast('Failed to validate or save configuration', 'error');
             this.showFormStatus('Network error occurred', 'error');
             this.setButtonState(submitBtn, 'error', 'Network Error');
-            
-            // Reset button state after 3 seconds
             setTimeout(() => {
                 this.setButtonLoading(submitBtn, false, 'Save Configuration');
             }, 3000);
@@ -233,12 +332,17 @@ class WhatsAppBotDashboard {
                         </div>
                     `;
                     
-                    // Hide the refresh QR button and update instructions when authenticated
-                    const qrActions = document.querySelector('.qr-actions');
-                    if (qrActions) {
-                        qrActions.innerHTML = `
-                            <p class="connection-success-text" style="color: #10B981; font-weight: 500; margin: 0;">✅ WhatsApp connection established successfully</p>
-                        `;
+                    // Show logout button and hide refresh QR button when authenticated
+                    const logoutBtn = document.getElementById('logoutBtn');
+                    const refreshQrBtn = document.getElementById('refreshQr');
+                    const qrInstructions = document.querySelector('.qr-instructions');
+                    
+                    if (logoutBtn) logoutBtn.style.display = 'inline-block';
+                    if (refreshQrBtn) refreshQrBtn.style.display = 'none';
+                    if (qrInstructions) {
+                        qrInstructions.textContent = '';
+                        qrInstructions.style.color = '';
+                        qrInstructions.style.fontWeight = '';
                     }
                     return;
                 }
@@ -275,17 +379,20 @@ class WhatsAppBotDashboard {
                 `;
                 
                 // Restore QR actions when not authenticated
-                const qrActions = document.querySelector('.qr-actions');
-                if (qrActions) {
-                    qrActions.innerHTML = `
-                        <button id="refreshQr" class="btn btn-secondary">Refresh QR Code</button>
-                        <p class="qr-instructions">Scan this QR code with your WhatsApp to connect the bot</p>
-                    `;
+                const logoutBtn = document.getElementById('logoutBtn');
+                const refreshQrBtn = document.getElementById('refreshQr');
+                const qrInstructions = document.querySelector('.qr-instructions');
+                
+                if (logoutBtn) logoutBtn.style.display = 'none';
+                if (refreshQrBtn) {
+                    refreshQrBtn.style.display = 'inline-block';
                     // Re-attach event listener for refresh button
-                    const refreshQRBtn = document.getElementById('refreshQr');
-                    if (refreshQRBtn) {
-                        refreshQRBtn.addEventListener('click', () => this.loadQRCode());
-                    }
+                    refreshQrBtn.addEventListener('click', () => this.loadQRCode());
+                }
+                if (qrInstructions) {
+                    qrInstructions.innerHTML = 'Scan this QR code with your WhatsApp to connect the bot';
+                    qrInstructions.style.color = '';
+                    qrInstructions.style.fontWeight = '';
                 }
             } else {
                 // Check if the error message indicates already connected
@@ -303,12 +410,17 @@ class WhatsAppBotDashboard {
                         </div>
                     `;
                     
-                    // Update QR actions for already connected state
-                    const qrActions = document.querySelector('.qr-actions');
-                    if (qrActions) {
-                        qrActions.innerHTML = `
-                            <p class="connection-success-text" style="color: #10B981; font-weight: 500; margin: 0;">✅ WhatsApp connection established successfully</p>
-                        `;
+                    // Show logout button and hide refresh QR button for already connected state
+                    const logoutBtn = document.getElementById('logoutBtn');
+                    const refreshQrBtn = document.getElementById('refreshQr');
+                    const qrInstructions = document.querySelector('.qr-instructions');
+                    
+                    if (logoutBtn) logoutBtn.style.display = 'inline-block';
+                    if (refreshQrBtn) refreshQrBtn.style.display = 'none';
+                    if (qrInstructions) {
+                        qrInstructions.textContent = '';
+                        qrInstructions.style.color = '';
+                        qrInstructions.style.fontWeight = '';
                     }
                 } else {
                     qrContainer.innerHTML = `
@@ -336,6 +448,7 @@ class WhatsAppBotDashboard {
             if (response.ok) {
                 const status = await response.json();
                 this.updateStatusDisplay(status);
+                this.tunePollingBasedOnAuth(Boolean(status.isAuthenticated));
             }
         } catch (error) {
             console.error('Error loading status:', error);
@@ -351,10 +464,13 @@ class WhatsAppBotDashboard {
     updateStatusDisplay(status) {
         // Update main status indicator
         const statusDot = document.querySelector('.status-dot');
-        const statusText = document.querySelector('.status-text');
+        const statusText = document.getElementById('statusText');
         
         if (statusDot && statusText) {
-            if (status.wahaConnected && status.openrouterConfigured && status.isAuthenticated) {
+            const ready = (typeof status.systemReady === 'boolean')
+                ? status.systemReady
+                : (status.wahaConnected && status.openrouterConfigured && status.isAuthenticated);
+            if (ready) {
                 statusDot.className = 'status-dot connected';
                 statusText.textContent = 'System Ready & Authenticated';
             } else if (status.wahaConnected && status.openrouterConfigured) {
@@ -374,8 +490,7 @@ class WhatsAppBotDashboard {
             'wahaStatus': status.wahaConnected ? 'Connected' : 'Disconnected',
             'openrouterStatus': status.openrouterConfigured ? 'Configured' : 'Not Configured',
             'sessionStatus': this.getSessionStatusText(status.sessionStatus, status.isAuthenticated),
-            'messagesCount': status.messagesProcessed || 0,
-            'systemUptime': status.uptime || '0s'
+            'messagesCount': status.messagesProcessed || 0
         };
 
         Object.entries(statusElements).forEach(([id, value]) => {
@@ -395,6 +510,52 @@ class WhatsAppBotDashboard {
                 }
             }
         });
+
+        // track auth state for polling adjustments
+        this.isAuthenticated = Boolean(status.isAuthenticated);
+
+        // Toggle config UI based on whether AI is configured, unless editing
+        if (!this.isEditingConfig) {
+            try {
+                const success = document.getElementById('configSuccess');
+                const form = document.getElementById('configForm');
+                if (success && form) {
+                    if (status.openrouterConfigured) {
+                        success.style.display = 'block';
+                        form.style.display = 'none';
+                    } else {
+                        success.style.display = 'none';
+                        form.style.display = 'block';
+                    }
+                }
+            } catch (_) {}
+        }
+
+        // Live uptime update: prefer numeric seconds if available
+        if (typeof status.uptimeSeconds === 'number' && !isNaN(status.uptimeSeconds)) {
+            this.startUptimeTicker(status.uptimeSeconds);
+        } else {
+            // Fallback to server string
+            const up = document.getElementById('uptime');
+            if (up && status.uptime) up.textContent = status.uptime;
+        }
+    }
+
+    startUptimeTicker(seconds) {
+        this.uptimeSeconds = Math.max(0, Math.floor(seconds));
+        const el = document.getElementById('uptime');
+        if (!el) return;
+        const render = () => {
+            const h = Math.floor(this.uptimeSeconds / 3600);
+            const m = Math.floor((this.uptimeSeconds % 3600) / 60);
+            el.textContent = `${h}h ${m}m`;
+        };
+        render();
+        if (this.uptimeInterval) clearInterval(this.uptimeInterval);
+        this.uptimeInterval = setInterval(() => {
+            this.uptimeSeconds += 1;
+            render();
+        }, 1000);
     }
 
     getSessionStatusText(sessionStatus, isAuthenticated) {
@@ -426,8 +587,14 @@ class WhatsAppBotDashboard {
             const response = await fetch('/conversations');
             if (response.ok) {
                 const data = await response.json();
-                const conversations = data.conversations || data; // Handle both response formats
-                this.displayConversations(conversations);
+                let conversations = data.conversations || data; // May be an object map
+                if (conversations && !Array.isArray(conversations) && typeof conversations === 'object') {
+                    conversations = Object.entries(conversations).map(([userId, conv]) => ({ userId, ...(conv || {}) }));
+                }
+                if (Array.isArray(conversations)) {
+                    conversations.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+                }
+                this.displayConversations(Array.isArray(conversations) ? conversations : []);
             } else {
                 conversationsContainer.innerHTML = '<div class="loading-placeholder">Failed to load conversations</div>';
             }
@@ -536,10 +703,10 @@ class WhatsAppBotDashboard {
             this.loadQRCode();
         }, 30000);
 
-        // Refresh status every 10 seconds
+        // Start with faster status polling; slow down after auth
         this.statusRefreshInterval = setInterval(() => {
             this.loadStatus();
-        }, 10000);
+        }, 3000);
 
         // Refresh conversations every 15 seconds
         this.conversationsRefreshInterval = setInterval(() => {
@@ -556,6 +723,67 @@ class WhatsAppBotDashboard {
         }
         if (this.conversationsRefreshInterval) {
             clearInterval(this.conversationsRefreshInterval);
+        }
+    }
+
+    tunePollingBasedOnAuth(isAuthed) {
+        if (this._lastPollingAuthState === isAuthed) return;
+        this._lastPollingAuthState = isAuthed;
+        if (this.statusRefreshInterval) {
+            clearInterval(this.statusRefreshInterval);
+        }
+        const interval = isAuthed ? 10000 : 3000;
+        this.statusRefreshInterval = setInterval(() => this.loadStatus(), interval);
+    }
+
+    connectRealtimeUpdates() {
+        try {
+            const es = new EventSource('/events');
+            this.sse = es;
+            es.onmessage = (e) => {
+                if (!e.data) return;
+                let data;
+                try { data = JSON.parse(e.data); } catch { return; }
+                this.handleRealtimeEvent(data);
+            };
+            es.onerror = () => {
+                try { es.close(); } catch {}
+                // Exponential backoff up to 30s
+                this._sseRetry = Math.min((this._sseRetry || 2000) * 2, 30000);
+                setTimeout(() => this.connectRealtimeUpdates(), this._sseRetry);
+            };
+        } catch (err) {
+            console.warn('Realtime updates unavailable:', err);
+        }
+    }
+
+    handleRealtimeEvent(evt) {
+        const type = evt?.type || '';
+        const payload = evt?.payload || {};
+        if (type === 'session.status') {
+            if (payload.status === 'WORKING') {
+                this.isAuthenticated = true;
+                this.tunePollingBasedOnAuth(true);
+                this.showToast('WhatsApp connected', 'success');
+                this.loadQRCode();
+                this.loadStatus();
+            } else if (payload.status === 'SCAN_QR_CODE' || payload.status === 'STARTING') {
+                this.isAuthenticated = false;
+                this.tunePollingBasedOnAuth(false);
+                this.loadQRCode();
+            }
+        } else if (type === 'ready' || type === 'auth') {
+            this.isAuthenticated = true;
+            this.tunePollingBasedOnAuth(true);
+            this.loadQRCode();
+            this.loadStatus();
+        } else if (type === 'qr') {
+            this.isAuthenticated = false;
+            this.tunePollingBasedOnAuth(false);
+            this.loadQRCode();
+        } else if (type === 'message' || type === 'message.any') {
+            // On new messages, refresh conversations list
+            this.loadConversations();
         }
     }
 
@@ -590,7 +818,13 @@ class WhatsAppBotDashboard {
         let strength = 'weak';
         
         if (!value) {
-            message = 'API key is required';
+            // If field is not required (existing key present), an empty value is acceptable
+            if (!input.hasAttribute('required')) {
+                isValid = true;
+                message = 'Using existing saved API key';
+            } else {
+                message = 'API key is required';
+            }
         } else if (!value.startsWith('sk-or-v1-') && !value.startsWith('sk-')) {
             message = 'API key must start with "sk-or-v1-" or "sk-"';
         } else if (value.length < 20) {
@@ -613,12 +847,11 @@ class WhatsAppBotDashboard {
         return isValid;
     }
     
-    validateAIModel(select) {
-        const value = select.value;
-        const isValid = value && value !== '';
-        const message = isValid ? 'Model selected' : 'Please select an AI model';
-        
-        this.updateValidationState(select, isValid, message);
+    validateAIModel(input) {
+        const value = (input.value || '').trim();
+        const isValid = value.length > 0;
+        const message = isValid ? 'Model set' : 'Enter a model ID (e.g., openai/gpt-4o-mini)';
+        this.updateValidationState(input, isValid, message);
         return isValid;
     }
     
@@ -626,23 +859,19 @@ class WhatsAppBotDashboard {
         const value = textarea.value.trim();
         const wrapper = textarea.closest('.form-group');
         const charCounter = wrapper?.querySelector('.char-counter');
-        const isValid = value.length >= 10 && value.length <= 1000;
+        const isValid = value.length <= 500; // Allow empty values, just check max length
         
         let message = '';
-        if (!value) {
-            message = 'System prompt is required';
-        } else if (value.length < 10) {
-            message = 'System prompt must be at least 10 characters';
-        } else if (value.length > 1000) {
-            message = 'System prompt must be less than 1000 characters';
+        if (value.length > 500) {
+            message = 'System prompt must be less than 500 characters';
         } else {
-            message = 'Valid system prompt';
+            message = value.length === 0 ? 'System prompt is optional' : 'Valid system prompt';
         }
         
         // Update character counter
         if (charCounter) {
-            charCounter.textContent = `${value.length}/1000`;
-            charCounter.className = `char-counter ${value.length > 1000 ? 'over-limit' : ''}`;
+            charCounter.textContent = `${value.length}/500`;
+            charCounter.className = `char-counter ${value.length > 500 ? 'over-limit' : ''}`;
         }
         
         this.updateValidationState(textarea, isValid, message);
@@ -687,15 +916,198 @@ class WhatsAppBotDashboard {
     }
     
     validateForm() {
-        const apiKeyInput = document.getElementById('openrouterApiKey');
+        const apiKeyInput = document.getElementById('apiKey');
         const aiModelSelect = document.getElementById('aiModel');
         const systemPromptTextarea = document.getElementById('systemPrompt');
         
-        const apiKeyValid = this.validateAPIKey(apiKeyInput);
+        // Only require API key validation if field is required or non-empty
+        const apiKeyValid = apiKeyInput.hasAttribute('required')
+            ? this.validateAPIKey(apiKeyInput)
+            : (apiKeyInput.value.trim() ? this.validateAPIKey(apiKeyInput) : true);
         const aiModelValid = this.validateAIModel(aiModelSelect);
         const systemPromptValid = this.validateSystemPrompt(systemPromptTextarea);
         
         return apiKeyValid && aiModelValid && systemPromptValid;
+    }
+
+    // Fetch model IDs from backend and populate custom combobox list
+    async loadModelList(apiKeyOverride = '') {
+        try {
+            const url = apiKeyOverride
+                ? `/openrouter/models?apiKey=${encodeURIComponent(apiKeyOverride)}`
+                : '/openrouter/models';
+            const resp = await fetch(url);
+            const data = await resp.json().catch(() => ({}));
+            if (!resp.ok || !data.success) {
+                // Silent fail to avoid noisy UX; user can still type
+                return;
+            }
+            const list = Array.isArray(data.models) ? data.models : [];
+            // Store for custom combobox rendering
+            this._models = list;
+            // If menu is open or input focused, refresh suggestions
+            const input = document.getElementById('aiModel');
+            if (input && (document.activeElement === input)) {
+                this.renderModelMenu(input.value);
+            }
+        } catch (_) {
+            // Ignore errors; the field remains writable
+        }
+    }
+
+    // Simple debounce utility
+    debounce(fn, wait = 300) {
+        let t;
+        return (...args) => {
+            clearTimeout(t);
+            t = setTimeout(() => fn.apply(this, args), wait);
+        };
+    }
+
+    // --- Custom combobox for AI Model ---
+    setupModelCombobox() {
+        const input = document.getElementById('aiModel');
+        const menu = document.getElementById('aiModelMenu');
+        if (!input || !menu) return;
+
+        // Open and render on focus/input
+        input.addEventListener('focus', () => {
+            this.renderModelMenu(input.value);
+            this.showModelMenu();
+        });
+        input.addEventListener('input', () => {
+            this.renderModelMenu(input.value);
+            this.showModelMenu();
+        });
+
+        // Keyboard navigation
+        input.addEventListener('keydown', (e) => {
+            if (!this._models || !this._models.length) return;
+            switch (e.key) {
+                case 'ArrowDown':
+                    e.preventDefault();
+                    this.moveActive(1);
+                    break;
+                case 'ArrowUp':
+                    e.preventDefault();
+                    this.moveActive(-1);
+                    break;
+                case 'Enter':
+                    if (this._modelMenuState.open) {
+                        e.preventDefault();
+                        this.selectActive();
+                    }
+                    break;
+                case 'Escape':
+                    this.hideModelMenu();
+                    break;
+            }
+        });
+
+        // Hide on blur (delay to allow click)
+        input.addEventListener('blur', () => setTimeout(() => this.hideModelMenu(), 120));
+
+        // Click selection
+        menu.addEventListener('mousedown', (e) => {
+            const item = e.target.closest('.combo-item');
+            if (!item) return;
+            e.preventDefault();
+            input.value = item.dataset.value || '';
+            this.validateAIModel(input);
+            this.hideModelMenu();
+        });
+    }
+
+    filterModels(query) {
+        const q = (query || '').toLowerCase().trim();
+        const list = Array.isArray(this._models) ? this._models : [];
+        if (!q) return list.slice(0, 20);
+        return list.filter(id => id.toLowerCase().includes(q)).slice(0, 20);
+    }
+
+    renderModelMenu(query) {
+        const menu = document.getElementById('aiModelMenu');
+        const input = document.getElementById('aiModel');
+        if (!menu || !input) return;
+
+        const matches = this.filterModels(query);
+        menu.innerHTML = '';
+        this._modelMenuState.activeIndex = -1;
+
+        if (!matches.length) {
+            const empty = document.createElement('div');
+            empty.className = 'combo-empty';
+            empty.textContent = 'No models found';
+            menu.appendChild(empty);
+            return;
+        }
+
+        matches.forEach((id, idx) => {
+            const div = document.createElement('div');
+            div.className = 'combo-item';
+            div.setAttribute('role', 'option');
+            div.dataset.value = id;
+            // Split provider/model for subtle styling
+            const parts = id.split('/');
+            const provider = parts[0] || '';
+            const model = parts.slice(1).join('/') || '';
+            div.innerHTML = `<span class="provider">${provider}</span>${model ? '/' : ''}<span class="model">${model}</span>`;
+            if (idx === 0) div.classList.add('active');
+            menu.appendChild(div);
+        });
+
+        this._modelMenuState.activeIndex = matches.length ? 0 : -1;
+        input.setAttribute('aria-expanded', 'true');
+    }
+
+    showModelMenu() {
+        const menu = document.getElementById('aiModelMenu');
+        const input = document.getElementById('aiModel');
+        if (!menu || !input) return;
+        menu.hidden = false;
+        this._modelMenuState.open = true;
+        input.setAttribute('aria-expanded', 'true');
+    }
+
+    hideModelMenu() {
+        const menu = document.getElementById('aiModelMenu');
+        const input = document.getElementById('aiModel');
+        if (!menu || !input) return;
+        menu.hidden = true;
+        this._modelMenuState.open = false;
+        this._modelMenuState.activeIndex = -1;
+        input.setAttribute('aria-expanded', 'false');
+    }
+
+    moveActive(delta) {
+        const menu = document.getElementById('aiModelMenu');
+        if (!menu || menu.hidden) return;
+        const items = Array.from(menu.querySelectorAll('.combo-item'));
+        if (!items.length) return;
+        let idx = this._modelMenuState.activeIndex;
+        idx = (idx + delta + items.length) % items.length;
+        items.forEach(el => el.classList.remove('active'));
+        items[idx].classList.add('active');
+        this._modelMenuState.activeIndex = idx;
+        // Ensure visibility
+        const active = items[idx];
+        const mRect = menu.getBoundingClientRect();
+        const aRect = active.getBoundingClientRect();
+        if (aRect.bottom > mRect.bottom) menu.scrollTop += (aRect.bottom - mRect.bottom);
+        if (aRect.top < mRect.top) menu.scrollTop -= (mRect.top - aRect.top);
+    }
+
+    selectActive() {
+        const menu = document.getElementById('aiModelMenu');
+        const input = document.getElementById('aiModel');
+        if (!menu || !input) return;
+        const items = Array.from(menu.querySelectorAll('.combo-item'));
+        if (!items.length) return;
+        const idx = this._modelMenuState.activeIndex >= 0 ? this._modelMenuState.activeIndex : 0;
+        const val = items[idx].dataset.value || '';
+        input.value = val;
+        this.validateAIModel(input);
+        this.hideModelMenu();
     }
     
     clearForm() {
@@ -730,7 +1142,7 @@ class WhatsAppBotDashboard {
             // Reset character counter
             const charCounter = document.querySelector('.char-counter');
             if (charCounter) {
-                charCounter.textContent = '0/1000';
+                charCounter.textContent = '0/500';
                 charCounter.className = 'char-counter';
             }
             
@@ -741,7 +1153,7 @@ class WhatsAppBotDashboard {
     
     async testConnection() {
         const testBtn = document.getElementById('testConnection');
-        const apiKeyInput = document.getElementById('openrouterApiKey');
+        const apiKeyInput = document.getElementById('apiKey');
         
         if (!this.validateAPIKey(apiKeyInput)) {
             this.showToast('Please enter a valid API key first', 'warning');
@@ -823,6 +1235,63 @@ class WhatsAppBotDashboard {
         const formStatus = document.getElementById('formStatus');
         if (formStatus) {
             formStatus.style.display = 'none';
+        }
+    }
+
+    async handleLogout() {
+        console.log('[UI] Logout button clicked');
+        this.showToast('Attempting to logout...', 'info');
+        const logoutBtn = document.getElementById('logoutBtn');
+        if (!logoutBtn) return;
+        // Proceed without native confirm to avoid environment blocking dialogs
+        // If you want confirmation, implement a custom in-page modal instead
+
+        // Show loading state
+        const btnText = logoutBtn.querySelector('.btn-text');
+        const btnLoading = logoutBtn.querySelector('.btn-loading');
+        
+        if (btnText) btnText.style.display = 'none';
+        if (btnLoading) btnLoading.style.display = 'inline-flex';
+        logoutBtn.disabled = true;
+        logoutBtn.classList.add('loading'); // Add loading class to disable pointer events
+
+        try {
+            const response = await fetch('/api/sessions/default/logout', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            const result = await response.json().catch(() => ({}));
+
+            if (response.ok) {
+                this.showToast('Successfully logged out from WhatsApp', 'success');
+                console.log('[UI] Logout successful', result);
+                
+                // Hide logout button and show refresh QR button
+                logoutBtn.style.display = 'none';
+                const refreshQrBtn = document.getElementById('refreshQr');
+                if (refreshQrBtn) {
+                    refreshQrBtn.style.display = 'inline-block';
+                }
+                
+                // Refresh QR code and status
+                await this.loadQRCode();
+                await this.loadStatus();
+            } else {
+                console.error('[UI] Logout failed response', result);
+                this.showToast(`Logout failed: ${result.message || 'Unknown error'}`, 'error');
+            }
+        } catch (error) {
+            console.error('Error during logout:', error);
+            this.showToast('Failed to logout. Please try again.', 'error');
+        } finally {
+            // Reset button state
+            if (btnText) btnText.style.display = 'inline-flex';
+            if (btnLoading) btnLoading.style.display = 'none';
+            logoutBtn.disabled = false;
+            logoutBtn.classList.remove('loading'); // Remove loading class to restore clickability
         }
     }
 

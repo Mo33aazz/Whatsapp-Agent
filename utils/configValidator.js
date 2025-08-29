@@ -57,26 +57,28 @@ class ConfigValidator {
    * Validate WAHA configuration
    */
   static validateWahaConfig() {
-    const wahaUrl = process.env.WAHA_URL;
     const sessionName = process.env.WAHA_SESSION_NAME || 'default';
-    
-    if (!wahaUrl) {
-      throw new Error('WAHA_URL is required');
+    let wahaUrl = process.env.WAHA_URL || 'http://localhost:3000';
+
+    // Ensure it looks like a URL; if not, fall back to sensible default
+    if (typeof wahaUrl !== 'string' || (!wahaUrl.startsWith('http://') && !wahaUrl.startsWith('https://'))) {
+      console.warn('Warning: WAHA_URL is missing or invalid. Falling back to http://localhost:3000');
+      wahaUrl = 'http://localhost:3000';
     }
-    
-    if (!wahaUrl.startsWith('http://') && !wahaUrl.startsWith('https://')) {
-      throw new Error('WAHA_URL must start with http:// or https://');
-    }
-    
+
     try {
+      // Validate URL format; on failure, use default but do not crash startup
+      // This keeps startup smooth even if env is misconfigured
+      // eslint-disable-next-line no-new
       new URL(wahaUrl);
     } catch (error) {
-      throw new Error(`Invalid WAHA_URL format: ${wahaUrl}`);
+      console.warn(`Warning: Invalid WAHA_URL format '${wahaUrl}'. Using http://localhost:3000`);
+      wahaUrl = 'http://localhost:3000';
     }
-    
+
     return {
       url: wahaUrl,
-      sessionName: sessionName
+      sessionName
     };
   }
   
@@ -142,7 +144,8 @@ class ConfigValidator {
    * Validate webhook configuration
    */
   static validateWebhookConfig() {
-    const webhookPath = process.env.WEBHOOK_PATH || '/webhook';
+    // Default to the WAHA events endpoint path used by this server
+    const webhookPath = process.env.WEBHOOK_PATH || '/waha-events';
     
     if (!webhookPath.startsWith('/')) {
       throw new Error('WEBHOOK_PATH must start with "/"');
@@ -198,7 +201,8 @@ class ConfigValidator {
     console.log(`WAHA Session: ${config.waha.sessionName}`);
     console.log(`OpenRouter Configured: ${config.openrouter.configured ? 'Yes' : 'No'}`);
     console.log(`OpenRouter Model: ${config.openrouter.model}`);
-    console.log(`Webhook Path: ${config.webhook.path}`);
+    // Clarify the actual events endpoint path
+    console.log(`Events Endpoint Path: ${config.webhook.path}`);
     console.log(`CORS Origin: ${config.security.corsOrigin}`);
     console.log(`Rate Limit: ${config.security.rateLimit.max} requests per ${config.security.rateLimit.windowMs}ms`);
     console.log('=====================================\n');

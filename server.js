@@ -15,6 +15,21 @@ const openrouterService = require('./services/openrouterService');
 const memoryService = require('./services/memoryService');
 const messageProcessor = require('./services/messageProcessor');
 
+// Simple Server-Sent Events (SSE) hub for realtime UI updates
+const sseClients = new Set();
+function sseBroadcast(event) {
+  const payload = `data: ${JSON.stringify(event)}\n\n`;
+  for (const client of sseClients) {
+    try {
+      client.write(payload);
+    } catch (_) {
+      // On write failure, drop client
+      try { client.end(); } catch (_) {}
+      sseClients.delete(client);
+    }
+  }
+}
+
 // Validate configuration at startup
 let config;
 try {
@@ -50,7 +65,12 @@ const limiter = rateLimit({
     error: 'Too many requests, please try again later.'
   }
 });
-app.use(limiter);
+// Apply rate limiter to general routes only (exclude webhooks and SSE)
+app.use((req, res, next) => {
+  const p = req.path || '';
+  if (p === '/events' || p === '/waha-events' || p === '/health') return next();
+  return limiter(req, res, next);
+});
 
 // Logging middleware
 app.use((req, res, next) => {
@@ -58,6 +78,40 @@ app.use((req, res, next) => {
     console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
   }
   next();
+});
+
+// GET /events - Server-Sent Events stream for realtime status updates
+app.get('/events', (req, res) => {
+  // Improve SSE reliability
+  req.socket.setTimeout(0);
+  req.socket.setNoDelay(true);
+  req.socket.setKeepAlive(true);
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  if (config.security.corsOrigin === '*') {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
+  res.flushHeaders && res.flushHeaders();
+
+  // Send initial comment to open stream
+  try { res.write(': connected\n\n'); } catch (_) {}
+
+  // Add client
+  sseClients.add(res);
+
+  // Heartbeat to keep proxies from closing idle connection
+  const heartbeat = setInterval(() => {
+    try { res.write(': ping\n\n'); } catch (_) {}
+  }, 25000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    sseClients.delete(res);
+    try { res.end(); } catch (_) {}
+  });
 });
 
 // Routes
@@ -83,6 +137,22 @@ app.get('/qr', async (req, res) => {
         alreadyConnected: true 
       });
     }
+    // Handle logout lock state: auto-unlock and retry once for smoother UX
+    if (error.message && error.message.toLowerCase().includes('locked')) {
+      try {
+        console.log('QR requested while session locked. Auto-unlocking and retrying...');
+        if (typeof wahaService.unlockLogout === 'function') wahaService.unlockLogout();
+        const qrCode = await wahaService.getQRCode();
+        return res.json({ success: true, qrCode, unlocked: true });
+      } catch (retryErr) {
+        console.log('Retry after unlock failed:', retryErr.message);
+        return res.status(409).json({ 
+          success: false,
+          message: 'Session was locked and retry failed. Please try again.',
+          locked: true
+        });
+      }
+    }
     
     res.status(500).json({ success: false, error: error.message });
   }
@@ -91,21 +161,31 @@ app.get('/qr', async (req, res) => {
 // POST /config - Configure OpenRouter API key and settings
 app.post('/config', async (req, res) => {
   try {
-    const { openrouterApiKey, aiModel, systemPrompt } = req.body;
-    
-    if (!openrouterApiKey) {
-      return res.status(400).json({ success: false, message: 'OpenRouter API key is required' });
+    const { openrouterApiKey, aiModel, systemPrompt } = req.body || {};
+    const existing = await memoryService.getConfig();
+
+    // Determine new API key value: keep existing if not provided or masked
+    let newApiKey = existing?.openrouterApiKey || '';
+    if (typeof openrouterApiKey === 'string' && openrouterApiKey.trim()) {
+      if (openrouterApiKey.trim() !== '***configured***') {
+        newApiKey = openrouterApiKey.trim();
+      }
     }
 
-    const config = {
-      openrouterApiKey,
-      aiModel: aiModel || 'openai/gpt-4o-mini',
-      systemPrompt: systemPrompt || 'You are a helpful WhatsApp assistant.',
-      wahaBaseUrl: process.env.WAHA_BASE_URL || 'http://localhost:3000',
-      webhookUrl: process.env.WEBHOOK_URL || 'http://localhost:5000/webhook'
+    // API key is optional: if empty and no existing key, allow saving other settings
+    // When left empty, existing key (if any) is preserved via newApiKey default above
+
+    const newConfig = {
+      openrouterApiKey: newApiKey,
+      aiModel: (aiModel || existing?.aiModel || 'openai/gpt-4o-mini'),
+      systemPrompt: (systemPrompt || existing?.systemPrompt || 'You are a helpful WhatsApp assistant.'),
+      wahaBaseUrl: existing?.wahaBaseUrl || process.env.WAHA_BASE_URL || 'http://localhost:3000',
+      // Default webhook URL used for WAHA events points to host.docker.internal
+      webhookUrl: existing?.webhookUrl || process.env.WEBHOOK_URL || 'http://host.docker.internal:3001/waha-events',
+      lastUpdated: new Date().toISOString()
     };
 
-    await memoryService.saveConfig(config);
+    await memoryService.saveConfig(newConfig);
     res.json({ success: true, message: 'Configuration saved successfully' });
   } catch (error) {
     console.error('Error saving configuration:', error);
@@ -113,56 +193,7 @@ app.post('/config', async (req, res) => {
   }
 });
 
-// POST /webhook - Receive incoming WhatsApp messages from WAHA
-app.post('/webhook', async (req, res) => {
-  try {
-    const { event, session, payload } = req.body;
-    
-    console.log('Webhook received:', { event, session, payload });
-    
-    let processed = false;
-    
-    // Handle session status changes
-    if (event === 'session.status') {
-      console.log(`Session ${session} status changed to:`, payload);
-      
-      // If session is now authenticated (WORKING), setup webhooks
-      if (payload && payload.status === 'WORKING') {
-        try {
-          await wahaService.setupWebhookAfterAuth();
-          console.log('Webhooks configured after successful authentication');
-        } catch (error) {
-          console.error('Failed to setup webhooks after auth:', error);
-        }
-      }
-      
-      processed = await messageProcessor.processSystemEvent(payload, session);
-    }
-    // Handle incoming messages
-    else if (event === 'message' && payload && payload.body) {
-      // Validate payload
-      if (!messageProcessor.validatePayload(payload)) {
-        return res.status(400).json({ status: 'error', error: 'Invalid payload' });
-      }
-      
-      processed = await messageProcessor.processMessage(payload, session);
-    }
-    // Handle authentication events
-    else if (event === 'auth' || event === 'qr' || event === 'ready') {
-      console.log(`Authentication event ${event} for session ${session}:`, payload);
-      processed = true;
-    }
-    else {
-      console.log(`Unhandled webhook event: ${event}`);
-    }
-    
-    res.json({ status: 'success', processed, event });
-  } catch (error) {
-    console.error('Error processing webhook:', error);
-    await memoryService.addError(`Webhook error: ${error.message}`);
-    res.status(500).json({ status: 'error', error: error.message });
-  }
-});
+// Legacy /webhook endpoint removed - all webhook traffic now goes through /waha-events
 
 // GET /status - Get connection and system status
 app.get('/status', async (req, res) => {
@@ -170,23 +201,28 @@ app.get('/status', async (req, res) => {
     const status = await memoryService.getStatus();
     const wahaConnected = await wahaService.checkConnection();
     const config = await memoryService.getConfig();
-    const openrouterConfigured = !!(config && config.openrouterApiKey);
+    const openrouterConfigured = !!(config && typeof config.openrouterApiKey === 'string' && config.openrouterApiKey.trim().startsWith('sk-'));
     
     // Get session status
     let sessionStatus = 'UNKNOWN';
     let isAuthenticated = false;
     try {
-      sessionStatus = await wahaService.getSessionStatus();
-      // Check if isAuthenticated method exists and is a function
+      const rawSession = await wahaService.getSessionStatus();
+      // Normalize to a simple string for UI (avoid [object Object])
+      sessionStatus = (typeof rawSession === 'string')
+        ? rawSession
+        : (rawSession && typeof rawSession.status === 'string' ? rawSession.status : 'UNKNOWN');
+      // Determine authentication
       if (typeof wahaService.isAuthenticated === 'function') {
         isAuthenticated = await wahaService.isAuthenticated();
       } else {
-        // Fallback: check if session status is WORKING
-        isAuthenticated = sessionStatus && sessionStatus.status === 'WORKING';
+        isAuthenticated = (sessionStatus === 'WORKING' || sessionStatus === 'AUTHENTICATED');
       }
     } catch (error) {
       console.log('Could not get session status:', error.message);
     }
+
+    // Skip proactive webhook ensures from /status; background monitor handles it
     
     const uptime = process.uptime();
     const uptimeString = `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m`;
@@ -196,8 +232,10 @@ app.get('/status', async (req, res) => {
       openrouterConfigured,
       sessionStatus,
       isAuthenticated,
+      systemReady: Boolean(wahaConnected && isAuthenticated),
       messagesProcessed: status.messagesProcessed || 0,
       uptime: uptimeString,
+      uptimeSeconds: Math.floor(uptime),
       lastMessageAt: status.lastMessageAt,
       errors: status.errors || []
     });
@@ -230,6 +268,55 @@ app.delete('/conversations', async (req, res) => {
   } catch (error) {
     console.error('Error clearing conversations:', error);
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// DELETE /api/sessions/:session - Delete a WhatsApp session on WAHA (forces re-auth QR)
+app.delete('/api/sessions/:session', async (req, res) => {
+  try {
+    const { session } = req.params;
+    console.log(`Attempting to delete session on WAHA: ${session}`);
+
+    // Delete session from WAHA so it cannot auto-restore and requires QR
+    const result = await wahaService.deleteSession(session);
+
+    console.log(`Session ${session} delete result:`, result);
+    res.json({ 
+      success: true, 
+      message: `Session ${session} deleted on WAHA`,
+      result 
+    });
+  } catch (error) {
+    console.error(`Error deleting session ${req.params.session}:`, error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message,
+      message: `Failed to delete session ${req.params.session}` 
+    });
+  }
+});
+
+// POST /api/sessions/:session/logout - Logout from a WhatsApp session on WAHA
+app.post('/api/sessions/:session/logout', async (req, res) => {
+  try {
+    const { session } = req.params;
+    console.log(`Attempting to logout session on WAHA: ${session}`);
+
+    const result = await wahaService.logoutSession(session);
+
+    console.log(`Session ${session} logout result:`, result);
+    res.json({
+      success: true,
+      message: `Session ${session} logged out on WAHA`,
+      result
+    });
+  } catch (error) {
+    console.error(`Error logging out session ${req.params.session}:`, error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      message: `Failed to logout session ${req.params.session}`
+    });
   }
 });
 
@@ -288,8 +375,97 @@ app.post('/config/test-openrouter', async (req, res) => {
   }
 });
 
-// Webhook endpoint for WAHA events
+// GET /openrouter/models - Return list of model IDs from OpenRouter
+app.get('/openrouter/models', async (req, res) => {
+  try {
+    const apiKey = (req.query.apiKey || '').toString();
+    const models = await openrouterService.getAvailableModels(apiKey);
+    // Return only model IDs (e.g., "openai/gpt-4o-mini")
+    const ids = Array.isArray(models)
+      ? models
+          .map(m => (typeof m === 'string' ? m : (m?.id || '')))
+          .filter(Boolean)
+      : [];
+    res.json({ success: true, models: ids });
+  } catch (error) {
+    console.error('Error fetching OpenRouter models:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Primary webhook endpoint for WAHA events
 app.post('/waha-events', async (req, res) => {
+  const timestamp = new Date().toISOString();
+  console.log(`\n🌐 [${timestamp}] Webhook received at /waha-events`);
+  
+  // Immediately acknowledge the webhook
+  res.status(200).json({ status: 'received' });
+  
+  // Log incoming webhook data
+  console.log('📨 Webhook details:', {
+    event: req.body?.event,
+    session: req.body?.session,
+    payloadKeys: Object.keys(req.body?.payload || {}),
+    contentType: req.headers['content-type'],
+    userAgent: req.headers['user-agent']
+  });
+  
+  // Process the event asynchronously
+  try {
+    const event = req.body;
+    console.log(`🔄 Processing event: ${event.event}`);
+    
+    // Broadcast event to SSE clients
+    try {
+      sseBroadcast({
+        type: event.event || 'unknown',
+        session: event.session || 'default',
+        payload: event.payload || {},
+        timestamp
+      });
+    } catch (_) {}
+    
+    // Handle different event types
+    if (event.event === 'ready' || event.event === 'auth' || event.event === 'state.change') {
+      console.log('⚙️ Setting up webhook for session state change...');
+      await wahaService.setupWebhookAfterAuth(event.session || 'default');
+    }
+    
+    // Process message events
+    if (event.event === 'message' || event.event === 'message.any') {
+      console.log('💬 Processing message event...');
+      try {
+        const p = event.payload || {};
+        const sender = p?.from || p?.chatId || p?.chat?.id || 'unknown';
+        const mtype = p?.type || p?.message?.type || 'text';
+        const preview = (p?.body || p?.text || '').toString();
+        console.log(`[WAHA] Incoming ${mtype} from ${sender}: ${preview.substring(0, 80)}`);
+      } catch (_) {}
+      const result = await messageProcessor.processMessage(event.payload, event.session || 'default');
+      console.log(`✅ Message processing result: ${result}`);
+    } else if (event.event === 'session.status') {
+      if (event.payload?.status === 'WORKING') {
+        await wahaService.setupWebhookAfterAuth(event.session || 'default');
+      }
+    } else {
+      const isDebug = (config.logLevel === 'debug' || config.nodeEnv === 'development');
+      if (isDebug) console.log(`Unknown WAHA event type: ${event.event}`);
+    }
+    
+    console.log('🎯 Webhook event processing completed');
+  } catch (error) {
+    console.error('❌ Error processing webhook event:', error);
+    console.error('📊 Error context:', {
+      event: req.body?.event,
+      session: req.body?.session,
+      error: error.message,
+      stack: error.stack
+    });
+  }
+});
+
+// Webhook endpoint for WAHA events (duplicate disabled)
+app.post('/waha-events-dup-disabled', async (req, res) => {
   const timestamp = new Date().toISOString();
   console.log(`\n🔔 [${timestamp}] WAHA Webhook Event Received:`);
   console.log('📨 Headers:', JSON.stringify(req.headers, null, 2));
@@ -299,6 +475,23 @@ app.post('/waha-events', async (req, res) => {
   try {
     const event = req.body;
     
+    // Broadcast all WAHA events to UI (minimal, safe payload)
+    try {
+      sseBroadcast({
+        type: event.event || 'unknown',
+        session: event.session || 'default',
+        payload: event.payload || {},
+        timestamp
+      });
+    } catch (_) {}
+
+    // Ensure webhook is configured on any clear auth/ready signals (idempotent)
+    try {
+      if (event.event === 'ready' || event.event === 'auth' || (event.event === 'state.change' && (event.payload?.state === 'CONNECTED' || event.payload?.state === 'OPEN'))) {
+        await wahaService.setupWebhookAfterAuth(event.session || 'default');
+      }
+    } catch (_) {}
+
     // Process the event based on its type
     if (event.event === 'message') {
       console.log('💬 Processing message event...');
@@ -367,13 +560,15 @@ app.get('/debug-webhook', async (req, res) => {
       console.log('⚠️ Error fetching webhook config:', error.message);
     }
     
+    const candidateUrls = (typeof wahaService.getCandidateWebhookUrls === 'function') ? wahaService.getCandidateWebhookUrls() : [];
     const debugInfo = {
       timestamp: new Date().toISOString(),
       session: sessionName,
       sessionStatus,
       isAuthenticated: isAuth,
       webhookConfig,
-      expectedWebhookUrl: `http://localhost:${process.env.PORT || 3001}/waha-events`,
+      expectedWebhookUrl: (typeof wahaService.getEventsWebhookUrl === 'function' ? wahaService.getEventsWebhookUrl() : 'http://host.docker.internal:3001/waha-events'),
+      expectedWebhookUrls: candidateUrls,
       wahaUrl,
       serverPort: process.env.PORT || 3001
     };
@@ -506,7 +701,9 @@ initializeServer().then(() => {
   app.listen(PORT, async () => {
     console.log(`WhatsApp AI Bot server running on port ${PORT}`);
     console.log(`Dashboard: http://localhost:${PORT}`);
-    console.log(`Webhook: http://localhost:${PORT}${config.webhook.path}`);
+    // Clarify WAHA events webhook URL for Docker-based WAHA deployments
+    console.log(`WAHA Events Webhook (for WAHA): http://host.docker.internal:3001/waha-events`);
+    console.log(`Events Endpoint Path: ${config.webhook.path}`);
     console.log(`Health Check: http://localhost:${PORT}/health`);
     
     try {
@@ -519,6 +716,21 @@ initializeServer().then(() => {
       });
       
       console.log('Server initialization completed successfully');
+
+      // Ensure the default WAHA session exists at startup (create if missing)
+      try {
+        const ensureRes = await wahaService.ensureDefaultSessionExists();
+        const msg = ensureRes?.created
+          ? 'Default WAHA session created'
+          : `Default WAHA session present (status: ${ensureRes?.status || 'unknown'})`;
+        console.log(msg);
+      } catch (e) {
+        console.log('Default session ensure failed (non-fatal):', e.message);
+      }
+
+      // Start a background monitor to ensure WAHA events webhook gets configured
+      // as soon as the session becomes authenticated. No immediate ensure here.
+      try { wahaService.startWebhookAuthMonitor(config.waha.sessionName); } catch (_) {}
     } catch (error) {
       console.error('Failed to update status:', error);
       await errorHandler.logError('Status Update Error', error);

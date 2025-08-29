@@ -109,6 +109,23 @@ body {
     position: relative;
 }
 
+.qr-actions {
+    position: relative;
+    z-index: 10; /* ensure above QR content */
+}
+
+/* Ensure the logout button is always clickable */
+#logoutBtn {
+    position: relative;
+    z-index: 20;
+    pointer-events: auto;
+}
+
+/* Ensure the success banner does not block clicks on actions below */
+.success-container {
+    pointer-events: none;
+}
+
 .qr-placeholder {
     display: flex;
     flex-direction: column;
@@ -180,6 +197,51 @@ body {
     position: relative;
     display: flex;
     align-items: center;
+}
+
+/* Custom Combobox Menu for AI Model */
+.combo-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    background: #ffffff;
+    border: 2px solid #e9ecef;
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+    max-height: 260px;
+    overflow-y: auto;
+    z-index: 50;
+}
+
+.combo-item {
+    padding: 10px 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.95rem;
+    color: #2a2a2a;
+}
+
+.combo-item:hover,
+.combo-item.active {
+    background: #f3f7f5;
+}
+
+.combo-item .provider {
+    font-weight: 600;
+    color: #128c7e;
+}
+
+.combo-item .model {
+    color: #4b5563;
+}
+
+.combo-empty {
+    padding: 10px 12px;
+    color: #6c757d;
+    font-size: 0.9rem;
 }
 
 .form-group input,
@@ -477,6 +539,24 @@ body {
 .btn-outline:hover:not(:disabled) {
     background: #e9ecef;
     color: #2a2a2a;
+}
+
+.btn-danger {
+    background: #dc3545;
+    border: 2px solid #dc3545;
+    color: white;
+    cursor: pointer;
+}
+
+.btn-danger:hover {
+    background: #c82333;
+    border-color: #bd2130;
+    color: white;
+}
+
+.btn-danger:active {
+    background: #bd2130;
+    border-color: #b21f2d;
 }
 
 .btn:disabled {

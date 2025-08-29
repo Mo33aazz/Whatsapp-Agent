@@ -120,6 +120,7 @@ Desktop.ini
 # Project-specific data files (sensitive)
 data/conversations.json
 data/status.json
+data/messages.jsonl
 data/config.json
 # Note: config.example.json is included as a template for users
 

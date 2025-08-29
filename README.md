@@ -132,6 +132,8 @@ Access the dashboard at `http://localhost:3001` to:
 | `NODE_ENV` | Environment | development | No |
 | `WAHA_URL` | WAHA server URL | http://localhost:3000 | Yes |
 | `WAHA_SESSION_NAME` | WhatsApp session name | default | Yes |
+| `WAHA_EVENTS_WEBHOOK_URL` | Full public URL WAHA should call for events (overrides below) | - | No |
+| `PUBLIC_BASE_URL` | Base URL for this server, used to derive events webhook (`${PUBLIC_BASE_URL}/waha-events`) | - | No |
 | `OPENROUTER_API_KEY` | OpenRouter API key | - | No* |
 | `OPENROUTER_MODEL` | AI model to use | openai/gpt-4o-mini | No |
 | `SYSTEM_PROMPT` | AI system prompt | Default helpful assistant | No |
@@ -143,6 +145,11 @@ Access the dashboard at `http://localhost:3001` to:
 | `HELMET_ENABLED` | Enable Helmet security | true | No |
 
 *Required for AI functionality
+
+Notes:
+- If `WAHA_EVENTS_WEBHOOK_URL` is set, it will be used as-is for the WAHA events webhook.
+- If not set, and `PUBLIC_BASE_URL` is provided, the webhook is `${PUBLIC_BASE_URL}/waha-events`.
+- Otherwise, the webhook defaults to `http://localhost:${PORT}/waha-events`.
 
 ## File Structure
 
@@ -270,3 +277,9 @@ Contributions are welcome! Please ensure:
 - Code follows the existing style
 - All features are properly tested
 - Documentation is updated accordingly
+
+## Persistent Memory
+
+- Every incoming and outgoing message is appended to an append-only JSON Lines file at `data/messages.jsonl` (configurable via `MEMORY_LOG_FILE_PATH`).
+- The AI uses this permanent log to reconstruct conversation history for each user on every reply; the prompt includes only the most recent messages based on an internal history limit to control latency and token usage.
+- The dashboard’s Clear Conversations button (`DELETE /conversations`) resets only the UI’s `data/conversations.json` preview. It does not delete the permanent log. To fully reset memory, stop the server and delete `data/messages.jsonl` manually.

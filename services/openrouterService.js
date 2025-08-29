@@ -1,10 +1,12 @@
-const axios = require('axios');
+const httpClient = require('../utils/httpClient');
 const memoryService = require('./memoryService');
 
 class OpenRouterService {
   constructor() {
     this.baseUrl = 'https://openrouter.ai/api/v1';
     this.defaultModel = 'openai/gpt-4o-mini';
+    this.defaultHistoryLimit = 8; // smaller context -> faster responses
+    this.defaultMaxTokens = 350;  // keep outputs concise for WhatsApp
   }
 
   /**
@@ -21,8 +23,26 @@ class OpenRouterService {
         throw new Error('OpenRouter API key not configured');
       }
 
-      const model = config.aiModel || this.defaultModel;
+      // Determine if this is a vision (image) request
+      const isImageRequest = message && typeof message === 'object' && message.kind === 'image' && message.base64;
+
+      // Prefer a vision-capable model for image requests
+      let model = config.aiModel || this.defaultModel;
+      if (isImageRequest) {
+        const m = (model || '').toLowerCase();
+        const likelyVision = (
+          m.includes('gpt-4o') || m.includes('gpt-4.1') || m.includes('omni') ||
+          m.includes('vision') || m.includes('llava') || m.includes('qwen') ||
+          m.includes('glm-4v') || m.includes('llama-3.2') || m.includes('sonnet-3') || m.includes('claude-3')
+        );
+        if (!likelyVision) {
+          // Fallback to a safe, vision-capable default
+          model = this.defaultModel; // 'openai/gpt-4o-mini'
+        }
+      }
       const systemPrompt = config.systemPrompt || 'You are a helpful WhatsApp assistant.';
+      const historyLimit = Number(config.historyLimit || this.defaultHistoryLimit);
+      const maxTokens = Number(config.maxTokens || this.defaultMaxTokens);
 
       // Prepare messages for the API
       const messages = [
@@ -32,26 +52,46 @@ class OpenRouterService {
         }
       ];
 
-      // Add conversation history (limit to last 10 messages to avoid token limits)
-      const recentHistory = conversationHistory.slice(-10);
+      // Add conversation history (keep compact for latency & cost)
+      const recentHistory = conversationHistory.slice(-historyLimit);
       for (const msg of recentHistory) {
-        messages.push({
-          role: msg.sender === 'user' ? 'user' : 'assistant',
-          content: msg.content
-        });
+        // Avoid injecting large base64 images into history; replace with placeholder
+        if (msg.type === 'image') {
+          messages.push({
+            role: msg.sender === 'user' ? 'user' : 'assistant',
+            content: '[image sent earlier – omitted from context]'
+          });
+        } else {
+          messages.push({
+            role: msg.sender === 'user' ? 'user' : 'assistant',
+            content: msg.content
+          });
+        }
       }
 
       // Add current message
-      messages.push({
-        role: 'user',
-        content: message
-      });
+      if (isImageRequest) {
+        const mime = message.mimeType || 'image/jpeg';
+        const dataUrl = `data:${mime};base64,${message.base64}`;
+        const parts = [];
+        const caption = (message.caption || '').toString().trim();
+        if (caption) {
+          parts.push({ type: 'text', text: caption });
+        } else {
+          parts.push({ type: 'text', text: 'Please analyze this image and describe its contents.' });
+        }
+        parts.push({ type: 'image_url', image_url: { url: dataUrl } });
 
-      const response = await axios.post(`${this.baseUrl}/chat/completions`, {
+        messages.push({ role: 'user', content: parts });
+      } else {
+        messages.push({ role: 'user', content: message });
+      }
+
+      const response = await httpClient.post(`${this.baseUrl}/chat/completions`, {
         model: model,
         messages: messages,
-        max_tokens: 500,
-        temperature: 0.7,
+        max_tokens: maxTokens,
+        temperature: 0.5,
         top_p: 1,
         frequency_penalty: 0,
         presence_penalty: 0
@@ -62,7 +102,7 @@ class OpenRouterService {
           'HTTP-Referer': `http://localhost:${process.env.PORT || 3001}`,
           'X-Title': 'WhatsApp AI Bot'
         },
-        timeout: 30000
+        timeout: 20000
       });
 
       if (response.data && response.data.choices && response.data.choices.length > 0) {
@@ -111,7 +151,7 @@ class OpenRouterService {
         return false;
       }
 
-      const response = await axios.post(`${this.baseUrl}/chat/completions`, {
+      const response = await httpClient.post(`${this.baseUrl}/chat/completions`, {
         model: config.aiModel || this.defaultModel,
         messages: [
           {
@@ -139,25 +179,29 @@ class OpenRouterService {
 
   /**
    * Get available models from OpenRouter
-   * @returns {Promise<Array>} List of available models
+   * @param {string} [apiKeyOverride] - Optional API key to use instead of saved config
+   * @returns {Promise<Array>} List of available models (raw objects from API)
    */
-  async getAvailableModels() {
+  async getAvailableModels(apiKeyOverride) {
     try {
       const config = await memoryService.getConfig();
+      const keyToUse = (apiKeyOverride && apiKeyOverride.trim())
+        ? apiKeyOverride.trim()
+        : (config?.openrouterApiKey || '');
       
-      if (!config || !config.openrouterApiKey) {
+      if (!keyToUse) {
         throw new Error('OpenRouter API key not configured');
       }
 
-      const response = await axios.get(`${this.baseUrl}/models`, {
+      const response = await httpClient.get(`${this.baseUrl}/models`, {
         headers: {
-          'Authorization': `Bearer ${config.openrouterApiKey}`,
+          'Authorization': `Bearer ${keyToUse}`,
           'Content-Type': 'application/json'
         },
-        timeout: 10000
+        timeout: 15000
       });
 
-      return response.data.data || [];
+      return response.data?.data || [];
     } catch (error) {
       console.error('Error getting available models:', error.message);
       return [];
@@ -179,7 +223,7 @@ class OpenRouterService {
       }
 
       // Test the API key with a simple request
-      const response = await axios.post(`${this.baseUrl}/chat/completions`, {
+      const response = await httpClient.post(`${this.baseUrl}/chat/completions`, {
         model: this.defaultModel,
         messages: [
           {
