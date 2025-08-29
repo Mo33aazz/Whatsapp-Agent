@@ -1,0 +1,32 @@
+services:
+  app:
+    build: .
+    ports:
+      - "3001:3001"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - "3091:3091"
+    environment:
+      WAHA_URL: http://waha:3000
+    depends_on:
+      waha:
+        condition: service_healthy # ← wait for WAHA to be healthy
+    env_file: .env
+
+  waha:
+    image: devlikeapro/waha:latest
+    platform: linux/amd64 # <— remove this line
+    ports:
+      - "3001:3000"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://localhost:3000 >/dev/null 2>&1 || exit 1",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20

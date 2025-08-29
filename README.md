@@ -12,6 +12,32 @@ A Node.js application that integrates WhatsApp with AI models through OpenRouter
 - 📊 Real-time status monitoring
 - 🎯 QR code display for WhatsApp connection
 
+## Quick Start with Docker
+
+Follow these steps to run the bot in a container:
+
+1. **Install Docker**  
+   [Docker Desktop](https://docs.docker.com/get-docker/) includes Docker Compose.
+
+2. **Prepare environment variables**  
+   Copy the example file and tweak values as needed:
+   ```bash
+   cp .env.example .env
+   ```
+
+3. **Build and start the service**  
+   ```bash
+   docker compose up --build
+   ```
+
+4. **Verify it works**  
+   Wait for the logs to show `Server is running on port 3001` then visit http://localhost:3001 or check:
+   ```bash
+   curl http://localhost:3001/health
+   ```
+
+Stop the containers with `Ctrl+C` and remove them with `docker compose down` when finished.
+
 ## Prerequisites
 
 - Node.js 18+ installed
