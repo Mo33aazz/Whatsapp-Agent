@@ -20,6 +20,7 @@ class WhatsAppBotDashboard {
         this.loadStatus();
         this.loadConversations();
         this.connectRealtimeUpdates();
+        this.initFeatureCards();
     }
 
     setupEventListeners() {
@@ -89,6 +90,12 @@ class WhatsAppBotDashboard {
         const logoutBtn = document.getElementById('logoutBtn');
         if (logoutBtn) {
             logoutBtn.addEventListener('click', () => this.handleLogout());
+        }
+
+        // Disconnect button
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        if (disconnectBtn) {
+            disconnectBtn.addEventListener('click', () => this.handleLogout());
         }
 
         // Enhanced form validation and interaction
@@ -514,6 +521,9 @@ class WhatsAppBotDashboard {
         // track auth state for polling adjustments
         this.isAuthenticated = Boolean(status.isAuthenticated);
 
+        // Update hero section stats
+        this.updateHeroStats(status);
+
         // Toggle config UI based on whether AI is configured, unless editing
         if (!this.isEditingConfig) {
             try {
@@ -530,6 +540,21 @@ class WhatsAppBotDashboard {
                 }
             } catch (_) {}
         }
+
+        // Toggle WhatsApp UI based on connection status
+        try {
+            const whatsappSuccess = document.getElementById('whatsappSuccess');
+            const whatsappConnection = document.getElementById('whatsappConnection');
+            if (whatsappSuccess && whatsappConnection) {
+                if (status.isAuthenticated) {
+                    whatsappSuccess.style.display = 'block';
+                    whatsappConnection.style.display = 'none';
+                } else {
+                    whatsappSuccess.style.display = 'none';
+                    whatsappConnection.style.display = 'block';
+                }
+            }
+        } catch (_) {}
 
         // Live uptime update: prefer numeric seconds if available
         if (typeof status.uptimeSeconds === 'number' && !isNaN(status.uptimeSeconds)) {
@@ -1293,6 +1318,117 @@ class WhatsAppBotDashboard {
             logoutBtn.disabled = false;
             logoutBtn.classList.remove('loading'); // Remove loading class to restore clickability
         }
+    }
+
+    // Update hero section statistics
+    updateHeroStats(status) {
+        const heroMessagesCount = document.getElementById('heroMessagesCount');
+        const heroUptime = document.getElementById('heroUptime');
+        const heroActiveChats = document.getElementById('heroActiveChats');
+
+        if (heroMessagesCount) {
+            this.animateNumber(heroMessagesCount, status.messagesProcessed || 0);
+        }
+
+        if (heroUptime) {
+            if (typeof status.uptimeSeconds === 'number' && !isNaN(status.uptimeSeconds)) {
+                heroUptime.textContent = this.formatUptime(status.uptimeSeconds);
+            } else {
+                heroUptime.textContent = status.uptime || '0h 0m';
+            }
+        }
+
+        if (heroActiveChats) {
+            // Calculate active chats from conversations or use a default
+            const activeChats = status.activeConversations || this.getActiveChatsCount();
+            this.animateNumber(heroActiveChats, activeChats);
+        }
+    }
+
+    // Animate numbers with a counting effect
+    animateNumber(element, targetNumber) {
+        const currentNumber = parseInt(element.textContent) || 0;
+        const difference = targetNumber - currentNumber;
+        const increment = Math.ceil(Math.abs(difference) / 20) || 1;
+        
+        if (difference === 0) return;
+        
+        let current = currentNumber;
+        const timer = setInterval(() => {
+            if (difference > 0) {
+                current += increment;
+                if (current >= targetNumber) {
+                    current = targetNumber;
+                    clearInterval(timer);
+                }
+            } else {
+                current -= increment;
+                if (current <= targetNumber) {
+                    current = targetNumber;
+                    clearInterval(timer);
+                }
+            }
+            element.textContent = current.toLocaleString();
+        }, 50);
+    }
+
+    // Format uptime from seconds to readable format
+    formatUptime(seconds) {
+        const hours = Math.floor(seconds / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        const secs = seconds % 60;
+        
+        if (hours > 0) {
+            return `${hours}h ${minutes}m`;
+        } else if (minutes > 0) {
+            return `${minutes}m ${secs}s`;
+        } else {
+            return `${secs}s`;
+        }
+    }
+
+    // Get active chats count from conversations list
+    getActiveChatsCount() {
+        const conversationsContainer = document.getElementById('conversationsContainer');
+        if (conversationsContainer) {
+            const conversations = conversationsContainer.querySelectorAll('.conversation-item');
+            return conversations.length;
+        }
+        return 0;
+    }
+
+    // Initialize feature cards animations
+    initFeatureCards() {
+        const featureCards = document.querySelectorAll('.feature-card');
+        
+        featureCards.forEach((card, index) => {
+            // Add staggered animation on page load
+            card.style.opacity = '0';
+            card.style.transform = 'translateY(20px)';
+            
+            setTimeout(() => {
+                card.style.transition = 'all 0.6s ease';
+                card.style.opacity = '1';
+                card.style.transform = 'translateY(0)';
+            }, 100 + (index * 150));
+
+            // Add hover sound effect (visual feedback)
+            card.addEventListener('mouseenter', () => {
+                card.style.transition = 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)';
+            });
+
+            // Add click animation
+            card.addEventListener('click', () => {
+                card.style.transform = 'scale(0.98)';
+                setTimeout(() => {
+                    card.style.transform = '';
+                }, 150);
+
+                // Show a "coming soon" toast
+                const title = card.querySelector('.feature-title').textContent;
+                this.showToast(`${title} is coming soon! Stay tuned for updates.`, 'info');
+            });
+        });
     }
 
     destroy() {

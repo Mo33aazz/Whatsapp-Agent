@@ -197,3 +197,39 @@ venv.bak/
 .mypy_cache/
 .dmypy.json
 dmypy.json
+
+# Monorepo/build tools
+.turbo/
+
+# Package managers
+pnpm-lock.yaml
+pnpm-debug.log*
+.pnpm-store/
+
+# Vercel/Netlify local artifacts
+.vercel/
+.netlify/
+
+# Cypress/Playwright test outputs
+cypress/videos/
+cypress/screenshots/
+playwright-report/
+playwright/.cache/
+
+# Vitest/Jest coverage caches
+coverage-final.json
+.cache/coverage/
+
+# Source maps
+*.map
+
+# Merge/patch artifacts
+*.orig
+*.rej
+
+# IDE project files
+*.iml
+*.code-workspace
+
+# Local tooling/state
+.trae/

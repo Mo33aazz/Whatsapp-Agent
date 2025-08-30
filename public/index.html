@@ -5,23 +5,84 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WhatsApp AI Bot Dashboard</title>
     <link rel="stylesheet" href="styles.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Source+Sans+Pro:wght@300;400;600;700&display=swap" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
 </head>
 <body>
-    <div class="container">
-        <header class="header">
-            <h1>WhatsApp AI Bot Dashboard</h1>
-            <div class="status-indicator" id="statusIndicator">
-                <span class="status-dot" id="statusDot"></span>
-                <span id="statusText">Checking status...</span>
+    <!-- Background Effects -->
+    <div class="bg-grid"></div>
+    <div class="bg-gradient"></div>
+    
+    <!-- Main Container -->
+    <div class="main-wrapper">
+        <!-- Navigation Header -->
+        <nav class="nav-header">
+            <div class="nav-container">
+                <div class="nav-brand">
+                    <i class="fab fa-whatsapp nav-logo"></i>
+                    <span class="nav-title">WhatsApp AI Bot</span>
+                </div>
+                <div class="status-indicator" id="statusIndicator">
+                    <span class="status-dot" id="statusDot"></span>
+                    <span id="statusText">Checking status...</span>
+                </div>
             </div>
-        </header>
+        </nav>
+
+        <!-- Hero Section -->
+        <section class="hero-section">
+            <div class="hero-container">
+                <div class="hero-content">
+                    <h1 class="hero-title">
+                        Power your business with 
+                        <span class="hero-gradient">AI-driven</span>
+                        WhatsApp automation
+                    </h1>
+                    <p class="hero-description">
+                        Connect, configure, and automate your WhatsApp conversations with advanced AI models. 
+                        Scale your customer service and engagement effortlessly.
+                    </p>
+                    <div class="hero-stats">
+                        <div class="stat-item">
+                            <span class="stat-number" id="heroMessagesCount">0</span>
+                            <span class="stat-label">Messages Processed</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-number" id="heroUptime">0h 0m</span>
+                            <span class="stat-label">Uptime</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-number" id="heroActiveChats">0</span>
+                            <span class="stat-label">Active Conversations</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Main Dashboard -->
+        <div class="container">
 
         <main class="main-content">
             <!-- QR Code Section -->
             <section class="card qr-section">
                 <h2>WhatsApp Connection</h2>
+                <div id="whatsappSuccess" class="config-success" style="display:none;">
+                    <div class="success-icon" style="font-size: 28px; color: #10B981; margin-bottom: 8px;">
+                        <i class="fas fa-check-circle"></i>
+                    </div>
+                    <h3 style="margin: 0 0 6px 0; color: #111827;">Successfully Connected</h3>
+                    <p style="margin: 0 0 14px 0; color: #6B7280;">WhatsApp is connected and ready to receive messages.</p>
+                    <button id="disconnectBtn" type="button" class="btn btn-danger">
+                        <span class="btn-text">
+                            <i class="fas fa-sign-out-alt"></i> Disconnect
+                        </span>
+                        <span class="btn-loading" style="display: none;">
+                            <i class="fas fa-spinner fa-spin"></i> Disconnecting...
+                        </span>
+                    </button>
+                </div>
+                <div id="whatsappConnection" class="qr-connection">
                 <div class="qr-container" id="qrContainer">
                     <div class="qr-placeholder" id="qrPlaceholder">
                         <div class="loading-spinner"></div>
@@ -29,17 +90,10 @@
                     </div>
                     <img id="qrImage" class="qr-image" style="display: none;" alt="WhatsApp QR Code">
                 </div>
-                <div class="qr-actions">
-                    <button id="refreshQr" class="btn btn-secondary">Refresh QR Code</button>
-                    <button id="logoutBtn" type="button" class="btn btn-danger" style="display: none;">
-                        <span class="btn-text">
-                            <i class="fas fa-sign-out-alt"></i> Logout
-                        </span>
-                        <span class="btn-loading" style="display: none;">
-                            <i class="fas fa-spinner fa-spin"></i> Logging out...
-                        </span>
-                    </button>
-                    <p class="qr-instructions">Scan this QR code with your WhatsApp to connect the bot</p>
+                    <div class="qr-actions">
+                        <button id="refreshQr" class="btn btn-secondary">Refresh QR Code</button>
+                        <p class="qr-instructions">Scan this QR code with your WhatsApp to connect the bot</p>
+                    </div>
                 </div>
             </section>
 
@@ -134,14 +188,6 @@
                         <span class="status-label">WhatsApp Session</span>
                         <span class="status-value" id="sessionStatus">Checking...</span>
                     </div>
-                    <div class="status-item">
-                        <span class="status-label">Messages Processed</span>
-                        <span class="status-value" id="messagesCount">0</span>
-                    </div>
-                    <div class="status-item">
-                        <span class="status-label">Uptime</span>
-                        <span class="status-value" id="uptime">0h 0m</span>
-                    </div>
                 </div>
             </section>
 
@@ -154,6 +200,118 @@
                 <button id="refreshConversations" class="btn btn-secondary">Refresh Conversations</button>
             </section>
         </main>
+
+        <!-- Coming Soon Features Section -->
+        <section class="features-section">
+            <div class="features-container">
+                <div class="features-header">
+                    <h2 class="features-title">Coming Soon</h2>
+                    <p class="features-subtitle">Advanced features to supercharge your WhatsApp automation</p>
+                </div>
+                
+                <div class="features-grid">
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <i class="fas fa-comments"></i>
+                        </div>
+                        <h3 class="feature-title">Live Chat</h3>
+                        <p class="feature-description">Real-time chat interface with advanced conversation management and instant notifications.</p>
+                        <div class="feature-badge">Coming Soon</div>
+                    </div>
+                    
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <i class="fas fa-plug"></i>
+                        </div>
+                        <h3 class="feature-title">Zapier & Make Integration</h3>
+                        <p class="feature-description">Connect with 5000+ apps through Zapier and Make.com for seamless workflow automation.</p>
+                        <div class="feature-badge">Coming Soon</div>
+                    </div>
+                    
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <i class="fas fa-database"></i>
+                        </div>
+                        <h3 class="feature-title">CRM System Connection</h3>
+                        <p class="feature-description">Sync conversations with your favorite CRM systems like Salesforce, HubSpot, and Pipedrive.</p>
+                        <div class="feature-badge">Coming Soon</div>
+                    </div>
+                    
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <i class="fas fa-boxes"></i>
+                        </div>
+                        <h3 class="feature-title">Product Management</h3>
+                        <p class="feature-description">Advanced product catalog management with automated recommendations and inventory tracking.</p>
+                        <div class="feature-badge">Coming Soon</div>
+                    </div>
+                    
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <i class="fas fa-tags"></i>
+                        </div>
+                        <h3 class="feature-title">Message Labels</h3>
+                        <p class="feature-description">Smart message categorization and labeling system for better organization and analytics.</p>
+                        <div class="feature-badge">Coming Soon</div>
+                    </div>
+                    
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <i class="fas fa-robot"></i>
+                        </div>
+                        <h3 class="feature-title">AI Automations</h3>
+                        <p class="feature-description">Advanced AI workflows, sentiment analysis, and intelligent routing for complex scenarios.</p>
+                        <div class="feature-badge">Coming Soon</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Creator Section -->
+        <section class="creator-section">
+            <div class="creator-container">
+                <div class="creator-card">
+                    <div class="creator-avatar">
+                        <img src="moazbuilds-avatar.png" alt="moazbuilds" class="avatar-img">
+                    </div>
+                    <div class="creator-info">
+                        <h3 class="creator-username">@moazbuilds</h3>
+                        <p class="creator-description">Follow the creator behind this amazing WhatsApp AI Bot</p>
+                    </div>
+                    <div class="social-links">
+                        <a href="https://tiktok.com/@moazbuilds" target="_blank" rel="noopener noreferrer" class="social-link tiktok">
+                            <i class="fab fa-tiktok"></i>
+                            <span>TikTok</span>
+                        </a>
+                        <a href="https://instagram.com/moazbuilds" target="_blank" rel="noopener noreferrer" class="social-link instagram">
+                            <i class="fab fa-instagram"></i>
+                            <span>Instagram</span>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Contact Section -->
+        <section class="contact-section">
+            <div class="contact-container">
+                <div class="contact-header">
+                    <h3 class="contact-title">Need Help or Have Ideas?</h3>
+                    <p class="contact-subtitle">If you have a feature request or found a bug, send us a message!</p>
+                </div>
+                <div class="contact-buttons">
+                    <a href="mailto:support@moazbuilds.com" class="contact-btn email-btn">
+                        <i class="fas fa-envelope"></i>
+                        <span>Email Us</span>
+                    </a>
+                    <a href="https://wa.me/+1234567890?text=Hi%20there!%20I%20have%20a%20question%20about%20the%20WhatsApp%20AI%20Bot." target="_blank" rel="noopener noreferrer" class="contact-btn whatsapp-btn">
+                        <i class="fab fa-whatsapp"></i>
+                        <span>WhatsApp</span>
+                    </a>
+                </div>
+            </div>
+        </section>
+        </div>
     </div>
 
     <!-- Toast Notifications -->
