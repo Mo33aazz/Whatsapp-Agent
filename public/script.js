@@ -1266,19 +1266,27 @@ class WhatsAppBotDashboard {
     async handleLogout() {
         console.log('[UI] Logout button clicked');
         this.showToast('Attempting to logout...', 'info');
+        // Support both primary logout and alternate disconnect buttons
         const logoutBtn = document.getElementById('logoutBtn');
-        if (!logoutBtn) return;
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const targetBtn = logoutBtn || disconnectBtn;
+        if (!targetBtn) {
+            console.warn('[UI] No logout/disconnect button found in DOM');
+            // Still attempt backend logout
+        }
         // Proceed without native confirm to avoid environment blocking dialogs
         // If you want confirmation, implement a custom in-page modal instead
 
         // Show loading state
-        const btnText = logoutBtn.querySelector('.btn-text');
-        const btnLoading = logoutBtn.querySelector('.btn-loading');
+        const btnText = targetBtn ? targetBtn.querySelector('.btn-text') : null;
+        const btnLoading = targetBtn ? targetBtn.querySelector('.btn-loading') : null;
         
         if (btnText) btnText.style.display = 'none';
         if (btnLoading) btnLoading.style.display = 'inline-flex';
-        logoutBtn.disabled = true;
-        logoutBtn.classList.add('loading'); // Add loading class to disable pointer events
+        if (targetBtn) {
+            targetBtn.disabled = true;
+            targetBtn.classList.add('loading'); // Add loading class to disable pointer events
+        }
 
         try {
             const response = await fetch('/api/sessions/default/logout', {
@@ -1295,7 +1303,8 @@ class WhatsAppBotDashboard {
                 console.log('[UI] Logout successful', result);
                 
                 // Hide logout button and show refresh QR button
-                logoutBtn.style.display = 'none';
+                if (logoutBtn) logoutBtn.style.display = 'none';
+                if (disconnectBtn) disconnectBtn.style.display = 'none';
                 const refreshQrBtn = document.getElementById('refreshQr');
                 if (refreshQrBtn) {
                     refreshQrBtn.style.display = 'inline-block';
@@ -1315,8 +1324,10 @@ class WhatsAppBotDashboard {
             // Reset button state
             if (btnText) btnText.style.display = 'inline-flex';
             if (btnLoading) btnLoading.style.display = 'none';
-            logoutBtn.disabled = false;
-            logoutBtn.classList.remove('loading'); // Remove loading class to restore clickability
+            if (targetBtn) {
+                targetBtn.disabled = false;
+                targetBtn.classList.remove('loading'); // Remove loading class to restore clickability
+            }
         }
     }
 

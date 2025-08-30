@@ -324,6 +324,13 @@ body {
     pointer-events: auto;
 }
 
+/* Ensure the alternate disconnect button is also clickable */
+#disconnectBtn {
+    position: relative;
+    z-index: 20;
+    pointer-events: auto;
+}
+
 /* Ensure the success banner does not block clicks on actions below */
 .success-container {
     pointer-events: none;
