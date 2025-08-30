@@ -44,6 +44,28 @@ try {
 const app = express();
 const PORT = config.port;
 
+// Persisted uptime accumulator (in seconds) carried across restarts
+let UPTIME_BASE_SECONDS = 0;
+
+function formatUptime(seconds) {
+  const s = Math.max(0, Math.floor(Number(seconds) || 0));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return `${h}h ${m}m`;
+}
+
+async function persistUptime() {
+  try {
+    const seconds = Math.floor(UPTIME_BASE_SECONDS + process.uptime());
+    await memoryService.updateStatus({
+      uptimeSeconds: seconds,
+      uptime: formatUptime(seconds)
+    });
+  } catch (_) {
+    // Non-fatal
+  }
+}
+
 // Middleware
 if (config.security.helmetEnabled) {
   app.use(helmet());
@@ -259,8 +281,8 @@ app.get('/status', async (req, res) => {
 
     // Skip proactive webhook ensures from /status; background monitor handles it
     
-    const uptime = process.uptime();
-    const uptimeString = `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m`;
+    const uptimeSeconds = Math.floor(UPTIME_BASE_SECONDS + process.uptime());
+    const uptimeString = formatUptime(uptimeSeconds);
     
     res.json({
       wahaConnected,
@@ -270,7 +292,7 @@ app.get('/status', async (req, res) => {
       systemReady: Boolean(wahaConnected && isAuthenticated),
       messagesProcessed: status.messagesProcessed || 0,
       uptime: uptimeString,
-      uptimeSeconds: Math.floor(uptime),
+      uptimeSeconds,
       lastMessageAt: status.lastMessageAt,
       errors: status.errors || []
     });
@@ -764,8 +786,25 @@ initializeServer().then(() => {
         wahaConnected: false,
         openrouterConfigured: config.openrouter.configured
       });
-      
+
       logger.info('Server', 'Server initialization completed successfully');
+
+      // Load persisted uptime base and start periodic persistence
+      try {
+        const st = await memoryService.getStatus();
+        const prev = parseInt(st?.uptimeSeconds || 0, 10);
+        UPTIME_BASE_SECONDS = isNaN(prev) ? 0 : Math.max(0, prev);
+      } catch (_) {
+        UPTIME_BASE_SECONDS = 0;
+      }
+      try {
+        if (global.__uptimeInterval) clearInterval(global.__uptimeInterval);
+      } catch (_) {}
+      try {
+        global.__uptimeInterval = setInterval(() => { persistUptime(); }, 10000);
+      } catch (_) {}
+      // Persist once immediately
+      persistUptime();
 
       // Ensure the default WAHA session exists at startup (create if missing) with webhook
       try {
@@ -790,5 +829,17 @@ initializeServer().then(() => {
   logger.error('Server', 'Failed to start server', error);
   process.exit(1);
 });
+
+// Graceful shutdown: persist uptime before exit
+function setupShutdownHandlers() {
+  const handler = async () => {
+    try { await persistUptime(); } catch (_) {}
+    try { if (global.__uptimeInterval) clearInterval(global.__uptimeInterval); } catch (_) {}
+    // Allow process to continue its default shutdown
+  };
+  try { process.on('SIGINT', handler); } catch (_) {}
+  try { process.on('SIGTERM', handler); } catch (_) {}
+}
+setupShutdownHandlers();
 
 module.exports = app;

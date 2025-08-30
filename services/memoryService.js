@@ -53,6 +53,7 @@ class MemoryService {
         messagesProcessed: 0,
         lastMessageAt: null,
         uptime: '0h 0m',
+        uptimeSeconds: 0,
         errors: []
       });
 
