@@ -27,9 +27,15 @@
                     <i class="fab fa-whatsapp nav-logo"></i>
                     <span class="nav-title">WhatsApp AI Bot</span>
                 </div>
-                <div class="status-indicator" id="statusIndicator">
-                    <span class="status-dot" id="statusDot"></span>
-                    <span id="statusText">Checking status...</span>
+                <div class="nav-actions" style="display:flex; align-items:center; gap:10px;">
+                    <div class="status-indicator" id="statusIndicator">
+                        <span class="status-dot" id="statusDot"></span>
+                        <span id="statusText">Checking status...</span>
+                    </div>
+                    <button id="clearConversationsHeader" class="btn btn-danger" style="min-width:auto; padding:8px 12px;">
+                        <i class="fas fa-trash"></i>
+                        <span>Reset Conversations</span>
+                    </button>
                 </div>
             </div>
         </nav>
@@ -204,7 +210,13 @@
                 <div class="conversations-container" id="conversationsContainer">
                     <div class="loading-placeholder">Loading conversations...</div>
                 </div>
-                <button id="refreshConversations" class="btn btn-secondary">Refresh Conversations</button>
+                <div class="form-actions" style="margin-top: 12px; display: flex; gap: 10px; flex-wrap: wrap;">
+                    <button id="refreshConversations" class="btn btn-secondary">Refresh Conversations</button>
+                    <button id="clearConversations" class="btn btn-danger">Reset Conversations</button>
+                </div>
+                <small class="form-help" style="display:block; margin-top: 8px;">
+                    Note: This resets only the dashboard conversations preview. Permanent logs are not deleted.
+                </small>
             </section>
         </main>
 

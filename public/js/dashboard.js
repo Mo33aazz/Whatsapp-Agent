@@ -59,6 +59,8 @@
 
       const clearConversationsBtn = document.getElementById('clearConversations')
       if (clearConversationsBtn) clearConversationsBtn.addEventListener('click', () => this.clearConversations())
+      const clearConversationsHeaderBtn = document.getElementById('clearConversationsHeader')
+      if (clearConversationsHeaderBtn) clearConversationsHeaderBtn.addEventListener('click', () => this.clearConversations())
 
       const refreshConversationsBtn = document.getElementById('refreshConversations')
       if (refreshConversationsBtn) refreshConversationsBtn.addEventListener('click', () => this.loadConversations())
@@ -192,4 +194,3 @@
   document.addEventListener('DOMContentLoaded', () => { window.dashboard = new WhatsAppBotDashboard() })
   window.addEventListener('beforeunload', () => { if (window.dashboard) window.dashboard.destroy() })
 })()
-
