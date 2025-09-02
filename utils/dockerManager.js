@@ -12,10 +12,13 @@ class DockerManager {
   constructor() {
     this.logger = logger.child('DockerManager');
     this.containerName = 'waha';
-    this.imageName = 'ghcr.io/devlikeapro/waha:latest';
+    this.imageName = 'devlikeapro/waha';
     this.port = 3000;
     this.healthCheckInterval = 5000; // 5 seconds
     this.maxHealthCheckAttempts = 30; // 30 attempts = 2.5 minutes max wait
+    this.environmentVariables = {
+      WHATSAPP_DEFAULT_ENGINE: 'NOWEB'
+    };
   }
 
   /**
@@ -27,17 +30,59 @@ class DockerManager {
       this.logger.debug('Checking if container exists', { containerName: this.containerName });
       
       const { stdout } = await execAsync(`docker ps -a --filter "name=${this.containerName}" --format "{{.Names}}"`);
-      
-      const exists = stdout.trim() === this.containerName;
+      const names = stdout.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+      const exists = names.includes(this.containerName);
       this.logger.info('Container existence check', { 
         containerName: this.containerName, 
         exists 
       });
       
-      return exists;
+      if (exists) {
+        return true;
+      }
+
+      // If a container with the expected name doesn't exist, try finding
+      // any container created from the WAHA image that exposes 3000:3000
+      const detected = await this.detectExistingContainerByImageAndPort();
+      if (detected) {
+        this.logger.info('Found existing WAHA container by image/port, updating containerName', {
+          previousName: 'waha',
+          detectedName: this.containerName
+        });
+        return true;
+      }
+
+      return false;
     } catch (error) {
       this.logger.error('Failed to check container existence', error);
       throw new Error(`Failed to check container existence: ${error.message}`);
+    }
+  }
+
+  /**
+   * Detect an existing WAHA container by image and port mapping.
+   * If found, updates this.containerName to the detected name.
+   * @returns {Promise<boolean>}
+   */
+  async detectExistingContainerByImageAndPort() {
+    try {
+      const cmd = `docker ps -a --filter "ancestor=${this.imageName}" --format "{{.ID}}|{{.Names}}|{{.Ports}}"`;
+      const { stdout } = await execAsync(cmd);
+      const lines = stdout.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+      for (const line of lines) {
+        const [id, name, portsRaw = ''] = line.split('|');
+        const ports = portsRaw || '';
+        // Look for host 3000 mapped to container 3000
+        if (ports.includes(':3000->3000')) {
+          this.containerName = name || this.containerName;
+          this.logger.info('Detected WAHA container by image/port', { id, name: this.containerName, ports });
+          return true;
+        }
+      }
+      return false;
+    } catch (error) {
+      this.logger.debug('Image/port-based detection failed', { error: error.message });
+      return false;
     }
   }
 
@@ -50,8 +95,8 @@ class DockerManager {
       this.logger.debug('Checking if container is running', { containerName: this.containerName });
       
       const { stdout } = await execAsync(`docker ps --filter "name=${this.containerName}" --format "{{.Names}}"`);
-      
-      const isRunning = stdout.trim() === this.containerName;
+      const names = stdout.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+      const isRunning = names.includes(this.containerName);
       this.logger.info('Container running status', { 
         containerName: this.containerName, 
         isRunning 
@@ -70,18 +115,27 @@ class DockerManager {
    */
   async createAndStartContainer() {
     try {
-      this.logger.info('Creating and starting WAHA container', { 
+      this.logger.info('Creating and starting WAHA container', {
         containerName: this.containerName,
         imageName: this.imageName,
         port: this.port
       });
 
-      const dockerRunCommand = `docker run -d \\
-        --name ${this.containerName} \\
-        --restart unless-stopped \\
-        -p ${this.port}:3000 \\
-        -v waha-data:/app/data \\
-        ${this.imageName}`;
+      const envVars = Object.entries(this.environmentVariables)
+        .map(([key, value]) => `-e ${key}=${value}`)
+        .join(' ');
+
+      // Build a single-line docker run (cross-shell safe, esp. PowerShell)
+      // Use -d to detach so the node process doesn't hang; include -it for TTY compatibility
+      const dockerRunCommand = [
+        'docker run -d -it',
+        `--name ${this.containerName}`,
+        '--restart unless-stopped',
+        `-p ${this.port}:3000`,
+        '-v waha-data:/app/data',
+        envVars,
+        this.imageName
+      ].filter(Boolean).join(' ');
 
       this.logger.debug('Executing docker run command', { command: dockerRunCommand });
 
@@ -151,7 +205,21 @@ class DockerManager {
         // Check if container is still running
         const isRunning = await this.isContainerRunning();
         if (!isRunning) {
-          throw new Error('Container is not running');
+          // Attempt to start the container if it stopped unexpectedly
+          this.logger.warning('Container not running during readiness check, attempting to start...', {
+            containerName: this.containerName
+          });
+          try {
+            await this.executeDockerCommand(`docker start ${this.containerName}`);
+            this.logger.info('Start command issued for container during readiness check', {
+              containerName: this.containerName
+            });
+          } catch (startErr) {
+            this.logger.warning('Failed to start container during readiness check', { error: startErr.message });
+          }
+          // Small delay before next attempt
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          continue;
         }
 
         // Check container health
@@ -202,10 +270,13 @@ class DockerManager {
       
       // Look for indicators that the container is ready
       const readyIndicators = [
-        'Server listening on',
-        'WAHA is ready',
-        'Application started',
-        'Express server started'
+        'server listening on',
+        'waha is ready',
+        'application started',
+        'express server started',
+        'http server started',
+        'whatsapp api server ready',
+        'server started on port'
       ];
 
       const isReady = readyIndicators.some(indicator => 
@@ -328,9 +399,10 @@ class DockerManager {
       }
 
       // Get container details
-      let containerInfo = {};
+      let containerInfo = [];
       try {
-        const { stdout } = await execAsync(`docker inspect ${this.containerName} --format '{{json .}}'`);
+        // Avoid template formatting which is fragile on PowerShell; parse raw JSON array
+        const { stdout } = await execAsync(`docker inspect ${this.containerName}`);
         containerInfo = JSON.parse(stdout);
       } catch (error) {
         this.logger.warning('Failed to get container inspect info', error);
@@ -343,7 +415,7 @@ class DockerManager {
         containerName: this.containerName,
         imageName: this.imageName,
         port: this.port,
-        containerInfo: containerInfo[0] || null
+        containerInfo: Array.isArray(containerInfo) ? (containerInfo[0] || null) : null
       };
     } catch (error) {
       this.logger.error('Failed to get container status', error);

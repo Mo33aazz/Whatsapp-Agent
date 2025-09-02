@@ -141,6 +141,39 @@ initializeServer().then(() => {
       // Persist once immediately
       persistUptime();
 
+      // Perform WAHA preflight check
+      try {
+        logger.info('Server', 'Performing WAHA preflight check...');
+        
+        const containerStatus = await WAHAInitializer.dockerManager.getContainerStatus();
+        
+        logger.info('Server', 'WAHA Container Status:', {
+          status: containerStatus.status,
+          exists: containerStatus.exists,
+          isRunning: containerStatus.isRunning,
+          imageName: containerStatus.imageName
+        });
+        
+        if (containerStatus.status === 'not-created') {
+          logger.info('Server', 'WAHA container not found, will be created automatically');
+        } else if (containerStatus.status === 'stopped') {
+          logger.info('Server', 'WAHA container found but stopped, will be started automatically');
+        } else if (containerStatus.status === 'running') {
+          logger.info('Server', 'WAHA container is already running');
+        }
+        
+        // Update memory service with container status
+        await memoryService.updateStatus({
+          wahaContainerStatus: containerStatus.status,
+          wahaContainerExists: containerStatus.exists,
+          wahaContainerRunning: containerStatus.isRunning
+        });
+        
+      } catch (preflightError) {
+        logger.error('Server', 'WAHA preflight check failed', preflightError);
+        // Continue with initialization even if preflight fails
+      }
+
       // Initialize WAHA with new initializer service
       try {
         const wahaInitializer = WAHAInitializer;
