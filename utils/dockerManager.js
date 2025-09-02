@@ -1,6 +1,7 @@
 const { exec } = require('child_process');
 const { promisify } = require('util');
 const logger = require('./logger');
+const httpClient = require('./httpClient');
 
 const execAsync = promisify(exec);
 
@@ -276,7 +277,19 @@ class DockerManager {
         'express server started',
         'http server started',
         'whatsapp api server ready',
-        'server started on port'
+        'server started on port',
+        'whatsapp http api is running on',
+        'whatsapp http api is running',
+        'whatsapp http api is ready',
+        'whatsapp http api ready',
+        'whatsapp http api',
+        'whatsapp api is running on',
+        'whatsapp api is running',
+        'whatsapp api ready',
+        'whatsapp api server is running',
+        'whatsapp api server ready',
+        'api is running on:',
+        'api is running on'
       ];
 
       const isReady = readyIndicators.some(indicator => 
@@ -292,6 +305,19 @@ class DockerManager {
         containerName: this.containerName,
         recentLogs: stdout
       });
+
+      // As an additional readiness signal, try a direct HTTP check
+      try {
+        const baseURL = process.env.WAHA_URL || 'http://localhost:3000';
+        const resp = await httpClient.get(`${baseURL}/api/sessions`, { timeout: 2000 });
+        if (resp && resp.status >= 200 && resp.status < 500) {
+          // If API responds (even 4xx), HTTP stack is up
+          this.logger.debug('HTTP readiness check passed for WAHA', { status: resp.status });
+          return true;
+        }
+      } catch (httpErr) {
+        this.logger.debug('HTTP readiness check not yet passing', { error: httpErr.message });
+      }
 
       return false;
     } catch (error) {
@@ -313,7 +339,8 @@ class DockerManager {
       if (!exists) {
         this.logger.info('Container does not exist, creating new container', { containerName: this.containerName });
         await this.createAndStartContainer();
-        return;
+        // Container was created and started now
+        return true;
       }
 
       const isRunning = await this.isContainerRunning();
@@ -321,11 +348,14 @@ class DockerManager {
       if (isRunning) {
         this.logger.info('Container is already running', { containerName: this.containerName });
         await this.waitForContainerReady();
-        return;
+        // Nothing to start, it was already running
+        return false;
       }
 
       this.logger.info('Container exists but is not running, starting container', { containerName: this.containerName });
       await this.startExistingContainer();
+      // Container was started now
+      return true;
     } catch (error) {
       this.logger.error('Failed to ensure container is running', error);
       throw new Error(`Failed to ensure container is running: ${error.message}`);

@@ -45,32 +45,19 @@ class WAHAService {
     try {
       const sessName = this.sessionName || 'default';
       const current = await this.sessionManager.getSessionStatus();
+      const webhookUrl = this.getEventsWebhookUrl();
+
       if (current && current.status && current.status !== 'NOT_FOUND') {
-        return { created: false, status: current.status };
+        // Ensure webhook present for existing session
+        const ensured = await this._ensureWebhook(sessName, webhookUrl, this.getRequiredEvents());
+        return { created: false, status: current.status, webhookEnsured: ensured };
       }
 
-      const webhookUrl = this.getEventsWebhookUrl();
-      const payload = {
-        name: sessName,
-        start: true,
-        config: {
-          proxy: null,
-          debug: false,
-          noweb: { store: { enabled: true, fullSync: false } },
-          webhooks: [
-            {
-              url: webhookUrl,
-              events: ['message', 'session.status', 'message.any'],
-              hmac: null,
-              retries: null,
-              customHeaders: null
-            }
-          ]
-        }
-      };
-
-      logger.info('Session', `Creating WAHA session '${sessName}' with webhook '${webhookUrl}'...`);
+      // Create session minimal, then ensure webhook via dedicated endpoint
+      const payload = { name: sessName, start: true };
+      logger.info('Session', `Creating WAHA session '${sessName}'...`);
       const result = await this.sessionManager.createSessionWithConfig(payload);
+      await this._ensureWebhook(sessName, webhookUrl, this.getRequiredEvents());
       return { created: true, result };
     } catch (error) {
       logger.warn('Session', 'Ensure default session (webhook-aware) failed', { error: error.message });
@@ -316,6 +303,55 @@ class WAHAService {
 
   _sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  // Webhook ensure helpers (explicitly configure via WAHA API)
+  async _getWebhooks(sessionName) {
+    try {
+      const httpClient = require('../utils/httpClient');
+      const resp = await httpClient.get(`${this.baseURL}/api/sessions/${sessionName}/webhooks`, {
+        timeout: 8000,
+        headers: { 'Accept': 'application/json' }
+      });
+      return Array.isArray(resp.data) ? resp.data : [];
+    } catch (e) {
+      if (e?.response?.status === 404) {
+        // Endpoint unsupported on this WAHA version
+        return null;
+      }
+      return [];
+    }
+  }
+
+  async _addWebhook(sessionName, url, events) {
+    const httpClient = require('../utils/httpClient');
+    await httpClient.post(`${this.baseURL}/api/sessions/${sessionName}/webhooks`, {
+      url,
+      events,
+      hmac: null,
+      retries: null,
+      customHeaders: null
+    }, {
+      timeout: 15000,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
+  async _ensureWebhook(sessionName, url, events) {
+    const webhooks = await this._getWebhooks(sessionName);
+    if (webhooks === null) {
+      // Endpoint not available; skip silently
+      return { ensured: false, skipped: true };
+    }
+    const has = webhooks.some(w => w && w.url === url);
+    if (has) return { ensured: true, updated: false };
+    try {
+      await this._addWebhook(sessionName, url, events);
+      return { ensured: true, updated: true };
+    } catch (e) {
+      logger.warn('Webhook', 'Failed to add webhook', { error: e.message });
+      return { ensured: false, error: e.message };
+    }
   }
 
   // Additional helper methods (guarded start only)

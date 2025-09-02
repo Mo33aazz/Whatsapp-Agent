@@ -1,6 +1,7 @@
 const DockerManager = require('../utils/dockerManager');
 const SessionInitializer = require('../utils/sessionInitializer');
 const logger = require('../utils/logger');
+const httpClient = require('../utils/httpClient');
 
 /**
  * WAHAInitializer main service that coordinates container and session management
@@ -44,11 +45,22 @@ class WAHAInitializer {
 
       // Step 2: Handle session management (conditional)
       if (this.containerStarted) {
+        // Wait for WAHA API to be fully ready before session calls
+        await this.waitForWahaApiReady();
         this.logger.info('Container was started, recreating session...');
         await this.sessionInitializer.recreateSessionWithWebhook();
       } else {
         this.logger.info('Validating existing session configuration...');
         await this.sessionInitializer.validateExistingSession();
+        // Ensure webhook present even for existing containers
+        try {
+          const ensured = await this.sessionInitializer.ensureWebhookPresent();
+          if (ensured?.updated) {
+            this.logger.info('Webhook added for existing session');
+          }
+        } catch (e) {
+          this.logger.debug('Skipping webhook ensure on existing session', { error: e.message });
+        }
       }
 
       // Step 3: Validate session and webhook
@@ -87,13 +99,8 @@ class WAHAInitializer {
   async checkWahaConnection() {
     try {
       this.logger.debug('Checking WAHA connection');
-      
-      const response = await fetch(`${this.getWahaUrl()}/api/sessions`, {
-        method: 'GET',
-        timeout: 5000
-      });
-      
-      const isRunning = response.ok;
+      const response = await httpClient.get(`${this.getWahaUrl()}/api/sessions`, { timeout: 5000, headers: { 'Accept': 'application/json' } });
+      const isRunning = !!response && response.status >= 200 && response.status < 500;
       this.logger.debug('WAHA connection check result', { isRunning });
       
       return isRunning;
@@ -101,6 +108,26 @@ class WAHAInitializer {
       this.logger.debug('WAHA connection check failed', { error: error.message });
       return false;
     }
+  }
+
+  /**
+   * Wait for WAHA API to be ready by polling /api/sessions
+   */
+  async waitForWahaApiReady(maxAttempts = 20, delayMs = 1000) {
+    for (let i = 1; i <= maxAttempts; i++) {
+      try {
+        const resp = await httpClient.get(`${this.getWahaUrl()}/api/sessions`, { timeout: 2000, headers: { 'Accept': 'application/json' } });
+        if (resp && resp.status >= 200 && resp.status < 500) {
+          this.logger.info('WAHA API is responsive', { attempt: i, status: resp.status });
+          return true;
+        }
+      } catch (e) {
+        this.logger.debug('WAHA API not ready yet', { attempt: i, error: e.message });
+      }
+      await this.sleep(delayMs);
+    }
+    this.logger.warning('Proceeding without explicit WAHA API ready confirmation');
+    return false;
   }
 
   /**

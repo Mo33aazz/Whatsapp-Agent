@@ -26,7 +26,7 @@ class SessionInitializer {
         sessionName: this.sessionName,
         webhookUrl: this.webhookUrl
       });
-
+      // Build payload with webhook already configured in the session config
       const payload = {
         name: this.sessionName,
         start: true,
@@ -37,7 +37,7 @@ class SessionInitializer {
           webhooks: [
             {
               url: this.webhookUrl,
-              events: ['message', 'session.status', 'message.any'],
+              events: ['message', 'session.status', 'state.change', 'message.any'],
               hmac: null,
               retries: null,
               customHeaders: null
@@ -46,16 +46,33 @@ class SessionInitializer {
         }
       };
 
-      const response = await httpClient.post(
-        `${this.baseURL}/api/sessions/start`,
-        payload,
-        {
-          timeout: 30000,
-          headers: { 'Content-Type': 'application/json' }
-        }
-      );
+      // Prefer /api/sessions/start; fallback to /api/sessions if needed
+      let response;
+      try {
+        response = await httpClient.post(
+          `${this.baseURL}/api/sessions/start`,
+          payload,
+          {
+            timeout: 30000,
+            headers: { 'Content-Type': 'application/json' }
+          }
+        );
+        this.logger.info('Session created via /api/sessions/start');
+      } catch (errStart) {
+        const status = errStart?.response?.status;
+        this.logger.debug('Create via /api/sessions/start failed, trying /api/sessions', { status, error: errStart.message });
+        response = await httpClient.post(
+          `${this.baseURL}/api/sessions`,
+          payload,
+          {
+            timeout: 30000,
+            headers: { 'Content-Type': 'application/json' }
+          }
+        );
+        this.logger.info('Session created via /api/sessions');
+      }
 
-      this.logger.info('Session created with webhook successfully', {
+      this.logger.info('Session created with webhook in config successfully', {
         sessionName: this.sessionName,
         sessionId: response.data?.id,
         status: response.data?.status
@@ -123,27 +140,22 @@ class SessionInitializer {
         forceDelete
       });
 
-      // Check if session exists before deletion
-      let sessionExists = true;
+      // Always attempt to delete the session first per requested flow
+      // DELETE /api/sessions/{sessionName}
       try {
-        await this.getSessionInfo();
-      } catch (error) {
-        if (error.response?.status === 404) {
-          sessionExists = false;
-        } else {
-          throw error;
-        }
-      }
-
-      // Delete session if it exists or force delete is requested
-      if (sessionExists || forceDelete) {
         await this.deleteSession();
+      } catch (delErr) {
+        // Ignore deletion failures other than non-404 network errors
+        this.logger.debug('Delete session step non-fatal', {
+          sessionName: this.sessionName,
+          error: delErr.message
+        });
       }
 
-      // Create new session with webhook
+      // Create new session first, then attach webhook
       const newSession = await this.createSessionWithWebhook();
 
-      this.logger.info('Session recreated successfully with webhook', {
+      this.logger.info('Session recreated successfully and webhook attached', {
         sessionName: this.sessionName,
         sessionId: newSession?.id
       });
@@ -180,14 +192,16 @@ class SessionInitializer {
 
       // Treat WORKING and SCAN_QR_CODE as healthy states
       if (sessionStatus === 'WORKING') {
+        const webhookOk = await this.checkWebhookConfiguration();
         this.logger.info('Session validation passed', {
           sessionName: this.sessionName,
-          status: sessionStatus
+          status: sessionStatus,
+          webhookConfigured: webhookOk
         });
         return {
           valid: true,
           status: sessionStatus,
-          webhookConfigured: true, // Assume webhook is configured since preflight checks passed
+          webhookConfigured: webhookOk,
           sessionInfo: sessionInfo?.data,
           awaitingQrScan: false
         };
@@ -195,14 +209,16 @@ class SessionInitializer {
 
       if (sessionStatus === 'SCAN_QR_CODE') {
         // Green path: session is up and waiting for QR scan
+        const webhookOk = await this.checkWebhookConfiguration();
         this.logger.info('Session awaiting QR scan (healthy state)', {
           sessionName: this.sessionName,
-          status: sessionStatus
+          status: sessionStatus,
+          webhookConfigured: webhookOk
         });
         return {
           valid: true,
           status: sessionStatus,
-          webhookConfigured: true, // Assume webhook is configured since preflight checks passed
+          webhookConfigured: webhookOk,
           sessionInfo: sessionInfo?.data,
           awaitingQrScan: true
         };
@@ -230,6 +246,17 @@ class SessionInitializer {
         error: error.message
       };
     }
+  }
+
+  /**
+   * Ensure webhook exists for the session; add if missing.
+   */
+  async ensureWebhookPresent() {
+    const ok = await this.checkWebhookConfiguration();
+    if (ok) return { ensured: true, updated: false };
+    await this.updateWebhookConfiguration();
+    const ok2 = await this.checkWebhookConfiguration();
+    return { ensured: ok2, updated: ok2 };
   }
 
   /**
@@ -351,7 +378,7 @@ class SessionInitializer {
 
       const payload = {
         url: this.webhookUrl,
-        events: ['message', 'session.status', 'message.any'],
+        events: ['message', 'session.status', 'state.change', 'message.any'],
         hmac: null,
         retries: null,
         customHeaders: null
