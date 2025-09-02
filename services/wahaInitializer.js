@@ -142,6 +142,26 @@ class WAHAInitializer {
           maxRetries: this.maxRetries,
           error: validation.error || 'Validation failed'
         });
+
+        // If the session explicitly reports FAILED, try a targeted restart
+        if (
+          (validation && validation.status === 'FAILED') ||
+          (typeof validation?.error === 'string' && validation.error.includes('FAILED'))
+        ) {
+          this.logger.warning('Session status FAILED detected during retry; restarting session...', {
+            attempt,
+            status: validation.status || 'UNKNOWN'
+          });
+          try {
+            // Reuse the session restart logic (also used for 422 handling)
+            await this.sessionInitializer.handle422Error();
+            this.logger.info('Session restart triggered due to FAILED status', { attempt });
+            // Give WAHA a brief moment before the next validation cycle
+            await this.sleep(2000);
+          } catch (restartError) {
+            this.logger.error('Failed to restart session after FAILED status', restartError);
+          }
+        }
         
       } catch (error) {
         this.logger.warning(`Retry ${attempt} threw error`, {

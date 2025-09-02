@@ -178,29 +178,45 @@ class SessionInitializer {
         status: sessionStatus
       });
 
-      // Check if session is working
-      if (sessionStatus !== 'WORKING') {
-        this.logger.warning('Session is not in WORKING state', {
+      // Treat WORKING and SCAN_QR_CODE as healthy states
+      if (sessionStatus === 'WORKING') {
+        this.logger.info('Session validation passed', {
           sessionName: this.sessionName,
           status: sessionStatus
         });
         return {
-          valid: false,
+          valid: true,
           status: sessionStatus,
-          error: `Session status is ${sessionStatus}, expected WORKING`
+          webhookConfigured: true, // Assume webhook is configured since preflight checks passed
+          sessionInfo: sessionInfo?.data,
+          awaitingQrScan: false
         };
       }
 
-      this.logger.info('Session validation passed', {
+      if (sessionStatus === 'SCAN_QR_CODE') {
+        // Green path: session is up and waiting for QR scan
+        this.logger.info('Session awaiting QR scan (healthy state)', {
+          sessionName: this.sessionName,
+          status: sessionStatus
+        });
+        return {
+          valid: true,
+          status: sessionStatus,
+          webhookConfigured: true, // Assume webhook is configured since preflight checks passed
+          sessionInfo: sessionInfo?.data,
+          awaitingQrScan: true
+        };
+      }
+
+      // Other states remain non-healthy
+      this.logger.warning('Session is not in a healthy state', {
         sessionName: this.sessionName,
         status: sessionStatus
       });
-
       return {
-        valid: true,
+        valid: false,
         status: sessionStatus,
-        webhookConfigured: true, // Assume webhook is configured since preflight checks passed
-        sessionInfo: sessionInfo?.data
+        error: `Session status is ${sessionStatus}, expected WORKING or SCAN_QR_CODE`
       };
     } catch (error) {
       this.logger.error('Failed to validate session', {
