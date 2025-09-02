@@ -91,16 +91,42 @@ class ConfigValidator {
     const model = process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini';
     const systemPrompt = process.env.SYSTEM_PROMPT || 'You are a helpful AI assistant for WhatsApp. Be concise and friendly in your responses. Keep messages under 2000 characters.';
     
-    // API key is optional at startup but required for AI functionality
-    if (apiKey && !apiKey.startsWith('sk-')) {
+    // Check API key from environment first, then from config file
+    let finalApiKey = apiKey;
+    let isConfigured = !!apiKey && apiKey !== 'your_openrouter_api_key_here' && apiKey !== '';
+    
+    // If not configured in env, check config file
+    if (!isConfigured) {
+      try {
+        const fs = require('fs');
+        const path = require('path');
+        const configPath = path.join(__dirname, '..', 'data', 'config.json');
+        
+        if (fs.existsSync(configPath)) {
+          const configData = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+          const configApiKey = configData.openrouterApiKey;
+          
+          if (configApiKey && configApiKey !== 'your-openrouter-api-key-here' && configApiKey !== '') {
+            finalApiKey = configApiKey;
+            isConfigured = true;
+            logger.info('Config', 'OpenRouter API key loaded from config file');
+          }
+        }
+      } catch (error) {
+        logger.debug('Config', 'Could not read config file for OpenRouter API key', { error: error.message });
+      }
+    }
+    
+    // Validate API key format if present
+    if (finalApiKey && !finalApiKey.startsWith('sk-')) {
       logger.warn('Config', 'OPENROUTER_API_KEY should start with "sk-"');
     }
     
     return {
-      apiKey: apiKey || null,
+      apiKey: finalApiKey || null,
       model: model,
       systemPrompt: systemPrompt,
-      configured: !!apiKey && apiKey !== 'your_openrouter_api_key_here'
+      configured: isConfigured
     };
   }
   

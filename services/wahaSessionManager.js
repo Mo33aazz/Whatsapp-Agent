@@ -119,6 +119,14 @@ class WAHASessionManager {
       logger.info('Session', 'Legacy session start response', { status: response.status, data: response.data });
       return response.data;
     } catch (error) {
+      const status = error.response?.status;
+      
+      // Handle 422 error gracefully - session already exists
+      if (status === 422) {
+        logger.debug('Session', `Session '${this.sessionName}' already exists (422 error)`);
+        return { status: 'exists', message: 'Session already exists' };
+      }
+      
       logger.error('Error in legacy startSession', 'Session', { error: error.message });
       throw error;
     }

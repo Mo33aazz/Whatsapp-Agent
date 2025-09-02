@@ -9,6 +9,10 @@ const logger = require('./utils/logger');
 const memoryService = require('./services/memoryService');
 const wahaService = require('./services/wahaService');
 
+// WAHA Initializer services
+const WAHAInitializer = require('./services/wahaInitializer');
+const WAHAErrorHandler = require('./services/wahaErrorHandler');
+
 // App composition
 const { applyMiddlewares } = require('./app/middlewares');
 const { registerRoutes } = require('./routes');
@@ -137,7 +141,36 @@ initializeServer().then(() => {
       // Persist once immediately
       persistUptime();
 
-      // Ensure the default WAHA session exists at startup (create if missing) with webhook
+      // Initialize WAHA with new initializer service
+      try {
+        const wahaInitializer = WAHAInitializer;
+        const wahaErrorHandler = WAHAErrorHandler;
+        
+        logger.info('Server', 'Starting WAHA initialization with new initializer service...');
+        
+        // Initialize WAHA
+        const initResult = await wahaInitializer.initialize();
+        logger.info('Server', `WAHA initialization: ${initResult.success ? 'Success' : 'Failed'}`);
+        if (initResult.success) {
+          logger.info('Server', `Container started: ${initResult.containerStarted ? 'Yes' : 'No'}`);
+          logger.info('Server', `Session status: ${initResult.sessionStatus}`);
+          logger.info('Server', `Webhook configured: ${initResult.webhookConfigured ? 'Yes' : 'No'}`);
+          
+          // Update memory service with WAHA status
+          await memoryService.updateStatus({
+            wahaConnected: true,
+            wahaSessionStatus: initResult.sessionStatus,
+            wahaContainerStarted: initResult.containerStarted,
+            wahaWebhookConfigured: initResult.webhookConfigured
+          });
+        } else {
+          logger.warning('Server', 'WAHA initialization failed, continuing with existing session management');
+        }
+      } catch (e) {
+        logger.error('Server', 'WAHA initialization failed (non-fatal)', e);
+      }
+
+      // Keep existing session ensure for backward compatibility
       try {
         const ensureRes = await wahaService.ensureDefaultSessionExistsWithWebhook();
         const msg = ensureRes?.created

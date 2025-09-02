@@ -13,9 +13,16 @@ class WAHAQRManager {
   async getQRCode() {
     try {
       logger.info('QR', 'Starting QR code generation process...');
-      const qrCode = await this.getQRCodeDirect();
+      const result = await this.getQRCodeDirect();
+      
+      // If result indicates already connected, return it as success
+      if (result && result.success) {
+        logger.info('QR', 'WhatsApp connection status returned', result);
+        return result;
+      }
+      
       logger.info('QR', 'QR code generated successfully');
-      return qrCode;
+      return result;
     } catch (error) {
       logger.error('Error in QR code generation process', 'QR', { error: error.message });
       throw new Error(`Failed to get QR code: ${error.message}`);
@@ -27,10 +34,22 @@ class WAHAQRManager {
       logger.info('QR', 'Attempting QR code generation with WAHA Core...');
       
       // Check session status and handle accordingly
-      await handleSessionStatusFn();
+      const sessionResult = await handleSessionStatusFn();
+      
+      // If session already returned success (already connected), return it
+      if (sessionResult && sessionResult.success) {
+        return sessionResult;
+      }
       
       // Poll for QR readiness
-      return await pollForQRCodeFn();
+      const pollResult = await pollForQRCodeFn();
+      
+      // If poll already returned success (already connected), return it
+      if (pollResult && pollResult.success) {
+        return pollResult;
+      }
+      
+      return pollResult;
     } catch (error) {
       logger.error('Error in WAHA Core QR generation', 'QR', { error: error.message });
       throw error;
@@ -49,7 +68,13 @@ class WAHAQRManager {
         if (sessionResponse.data.me) {
           logger.info('QR', 'Connected as', { user: sessionResponse.data.me.pushName || sessionResponse.data.me.id });
         }
-        throw new Error('WhatsApp is already connected. No QR code needed.');
+        // Instead of throwing an error, return success with connected status
+        return {
+          success: true,
+          alreadyConnected: true,
+          message: 'WhatsApp is already connected',
+          user: sessionResponse.data.me?.pushName || sessionResponse.data.me?.id
+        };
       }
       
       if (sessionResponse.data.status === 'STOPPED') {
@@ -79,7 +104,13 @@ class WAHAQRManager {
       }
       
       if (status === 'WORKING' || status === 'AUTHENTICATED') {
-        throw new Error('WhatsApp is already connected. No QR code needed.');
+        // Instead of throwing an error, return success with connected status
+        return {
+          success: true,
+          alreadyConnected: true,
+          message: 'WhatsApp is already connected',
+          status: status
+        };
       }
       
       if (status === 'STOPPED' || status === 'FAILED') {
