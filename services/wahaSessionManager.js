@@ -20,6 +20,11 @@ class WAHASessionManager {
       
       if (response?.data) {
         logger.info('Session', `Session '${this.sessionName}' status`, { status: response.data.status });
+        if (response.data.status === 'SCAN_QR_CODE') {
+          logger.info('Session', `Session '${this.sessionName}' awaiting QR scan (healthy)`);
+        } else if (response.data.status === 'WORKING') {
+          logger.info('Session', `Session '${this.sessionName}' authenticated and working`);
+        }
         return response.data;
       }
       

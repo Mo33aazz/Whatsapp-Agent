@@ -60,6 +60,9 @@ class WAHAQRManager {
     try {
       const sessionResponse = await getSessionInfoFn();
       logger.info('QR', 'Session status', { status: sessionResponse.data.status });
+      if (sessionResponse.data.status === 'SCAN_QR_CODE') {
+        logger.info('QR', 'Session awaiting QR scan (healthy)');
+      }
       
       safeStartWebhookMonitorFn();
       
@@ -119,6 +122,7 @@ class WAHAQRManager {
       
       // Try to fetch QR code if ready
       if (status === 'SCAN_QR_CODE') {
+        logger.info('QR', 'Session ready for QR; fetching QR code');
         const qrCode = await this.fetchQRCode();
         if (qrCode) return qrCode;
       }
