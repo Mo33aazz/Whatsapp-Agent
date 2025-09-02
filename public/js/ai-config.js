@@ -46,6 +46,15 @@
           }
         }
       })
+      
+      // Populate products/services in standalone section
+      if (config.products && Array.isArray(config.products)) {
+        AppConfig.populateProducts(d, config.products)
+        AppConfig.displayProducts(config.products)
+      } else {
+        AppConfig.populateProducts(d, [])
+        AppConfig.displayProducts([])
+      }
     },
 
     async handleConfigSubmit(d, e) {
@@ -62,6 +71,7 @@
         systemPrompt: formData.get('systemPrompt'),
         wahaUrl: formData.get('wahaUrl'),
         sessionName: formData.get('sessionName')
+        // Products are now handled separately in the standalone section
       }
       if (apiKey) config.openrouterApiKey = apiKey
 
@@ -153,6 +163,9 @@
         systemPromptTextarea.addEventListener('input', (e) => AppConfig.validateSystemPrompt(d, e.target))
         systemPromptTextarea.addEventListener('blur', (e) => AppConfig.validateSystemPrompt(d, e.target))
       }
+
+      // Setup standalone products section
+      AppConfig.initProductsSection(d)
     },
 
     setupAPIKeyToggle(d) {
@@ -346,13 +359,12 @@
       const value = textarea.value.trim()
       const wrapper = textarea.closest('.form-group')
       const charCounter = wrapper?.querySelector('.char-counter')
-      const isValid = value.length <= 500
-      let message = ''
-      if (value.length > 500) message = 'System prompt must be less than 500 characters'
-      else message = value.length === 0 ? 'System prompt is optional' : 'Valid system prompt'
+      // Unlimited length allowed; always valid
+      const isValid = true
+      const message = value.length === 0 ? 'System prompt is optional' : 'Valid system prompt'
       if (charCounter) {
-        charCounter.textContent = `${value.length}/500`
-        charCounter.className = `char-counter ${value.length > 500 ? 'over-limit' : ''}`
+        charCounter.textContent = `${value.length}`
+        charCounter.className = 'char-counter'
       }
       AppConfig.updateValidationState(d, textarea, isValid, message)
       return isValid
@@ -393,6 +405,409 @@
       return apiKeyValid && aiModelValid && systemPromptValid
     },
 
+    // Products/Services Management - Standalone Section
+    setupProductsSection(d) {
+      const editBtn = document.getElementById('editProductsBtn')
+      const saveBtn = document.getElementById('saveProductsBtn')
+      const cancelBtn = document.getElementById('cancelProductsBtn')
+      const editForm = document.getElementById('productsEditForm')
+      const display = document.getElementById('productsDisplay')
+      
+      if (!editBtn || !saveBtn || !cancelBtn || !editForm || !display) return
+      
+      // Ensure edit button is always visible
+      editBtn.style.display = 'inline-flex'
+      editBtn.style.visibility = 'visible'
+      editBtn.style.opacity = '1'
+      
+      // Edit button click
+      editBtn.addEventListener('click', () => {
+        editForm.style.display = 'block'
+        display.style.display = 'none'
+        editBtn.style.display = 'none'
+      })
+      
+      // Cancel button click
+      cancelBtn.addEventListener('click', () => {
+        AppConfig.cancelProductsEdit(d)
+      })
+      
+      // Save button click
+      saveBtn.addEventListener('click', () => {
+        AppConfig.saveProducts(d)
+      })
+      
+      // Setup products management in the standalone form
+      AppConfig.setupProductsManagement(d)
+    },
+
+    cancelProductsEdit(d) {
+      const editForm = document.getElementById('productsEditForm')
+      const display = document.getElementById('productsDisplay')
+      const editBtn = document.getElementById('editProductsBtn')
+      const successMsg = document.getElementById('productsSuccess')
+      
+      // Hide edit form, show display
+      editForm.style.display = 'none'
+      display.style.display = 'block'
+      editBtn.style.display = 'inline-flex'
+      successMsg.style.display = 'none'
+      
+      // Reset form to current products
+      const currentProducts = AppConfig.getCurrentProducts()
+      AppConfig.populateProducts(d, currentProducts)
+    },
+
+    async saveProducts(d) {
+      const saveBtn = document.getElementById('saveProductsBtn')
+      const products = AppConfig.getProductsData()
+      
+      if (products.length === 0) {
+        AppUtils.showToast('Please add at least one product or service', 'warning')
+        return
+      }
+      
+      AppUtils.setButtonLoading(saveBtn, true, 'Saving...')
+      
+      try {
+        const response = await fetch('/config/products', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ products })
+        })
+        
+        const result = await response.json().catch(() => ({}))
+        
+        if (response.ok && result.success !== false) {
+          AppUtils.showToast('Products saved successfully!', 'success')
+          AppConfig.showProductsSuccess(d)
+          setTimeout(() => {
+            AppConfig.cancelProductsEdit(d)
+          }, 1000)
+        } else {
+          const error = result && result.message ? result : { message: 'Save failed' }
+          AppUtils.showToast(`Failed to save products: ${error.message}`, 'error')
+        }
+      } catch (error) {
+        console.error('Error saving products:', error)
+        AppUtils.showToast('Failed to save products', 'error')
+      } finally {
+        AppUtils.setButtonLoading(saveBtn, false, 'Save Products')
+      }
+    },
+
+    // Initialize products section when page loads
+    initProductsSection(d) {
+      // Load existing products
+      AppConfig.loadProductsFromServer(d)
+      
+      // Setup event listeners
+      AppConfig.setupProductsSection(d)
+    },
+
+    // Load products from server
+    async loadProductsFromServer(d) {
+      try {
+        const response = await fetch('/config/products')
+        if (response.ok) {
+          const result = await response.json()
+          const products = result.products || []
+          AppConfig.populateProducts(d, products)
+          AppConfig.displayProducts(products)
+        }
+      } catch (error) {
+        console.error('Error loading products:', error)
+        // Load empty products
+        AppConfig.populateProducts(d, [])
+        AppConfig.displayProducts([])
+      }
+    },
+
+    // Display products in the grid
+    displayProducts(products) {
+      const grid = document.getElementById('productsGrid')
+      const editForm = document.getElementById('productsEditForm')
+      const display = document.getElementById('productsDisplay')
+      
+      if (!grid || !editForm || !display) return
+      
+      // Show edit form if editing, otherwise show display
+      if (editForm.style.display === 'block') {
+        return
+      }
+      
+      display.style.display = 'block'
+      
+      if (!products || products.length === 0) {
+        grid.innerHTML = `
+          <div class="empty-products">
+            <i class="fas fa-box-open" style="font-size: 3rem; color: #9CA3AF; margin-bottom: 1rem;"></i>
+            <p>No products configured yet. Click "Edit Products" to add your first product or service.</p>
+          </div>
+        `
+        return
+      }
+      
+      grid.innerHTML = products.map((product, index) => `
+        <div class="product-card">
+          <div class="product-card-header">
+            <div class="product-card-icon">
+              <i class="fas fa-box"></i>
+            </div>
+            <h3 class="product-card-title">${product.name || 'Unnamed Product'}</h3>
+          </div>
+          <div class="product-card-price">${product.price || 'Price not specified'}</div>
+          <p class="product-card-description">${product.note || 'No description available'}</p>
+          <div class="product-card-footer">
+            <div class="product-card-status">
+              <span class="status-dot"></span>
+              <span>Active</span>
+            </div>
+            <small>Product ${index + 1}</small>
+          </div>
+        </div>
+      `).join('')
+    },
+
+    // Show products success state
+    showProductsSuccess(d) {
+      const successDiv = document.getElementById('productsSuccess')
+      const editForm = document.getElementById('productsEditForm')
+      const display = document.getElementById('productsDisplay')
+      
+      if (!successDiv || !editForm || !display) return
+      
+      editForm.style.display = 'none'
+      display.style.display = 'none'
+      successDiv.style.display = 'block'
+      
+      // Hide success message after 5 seconds
+      setTimeout(() => {
+        successDiv.style.display = 'none'
+        display.style.display = 'block'
+      }, 5000)
+    },
+
+    // Cancel products editing
+    cancelProductsEdit(d) {
+      const successDiv = document.getElementById('productsSuccess')
+      const editForm = document.getElementById('productsEditForm')
+      const display = document.getElementById('productsDisplay')
+      const editBtn = document.getElementById('editProductsBtn')
+      
+      if (!successDiv || !editForm || !display || !editBtn) return
+      
+      successDiv.style.display = 'none'
+      editForm.style.display = 'none'
+      display.style.display = 'block'
+      editBtn.style.display = 'inline-flex'
+      
+      // Reload products to show latest state
+      AppConfig.loadProductsFromServer(d)
+    },
+
+    // Initialize products section when page loads
+    initProductsSection(d) {
+      // Load existing products
+      AppConfig.loadProductsFromServer(d)
+      
+      // Setup event listeners
+      AppConfig.setupProductsSection(d)
+    },
+
+    // Load products from server
+    async loadProductsFromServer(d) {
+      try {
+        const response = await fetch('/config/products')
+        if (response.ok) {
+          const result = await response.json()
+          const products = result.products || []
+          AppConfig.populateProducts(d, products)
+          AppConfig.displayProducts(products)
+        }
+      } catch (error) {
+        console.error('Error loading products:', error)
+        // Load empty products
+        AppConfig.populateProducts(d, [])
+        AppConfig.displayProducts([])
+      }
+    },
+
+    showProductsSuccess(d) {
+      const successMsg = document.getElementById('productsSuccess')
+      const editBtn = document.getElementById('editProductsBtn')
+      
+      successMsg.style.display = 'block'
+      editBtn.style.display = 'inline-flex'
+    },
+
+    getCurrentProducts() {
+      // Get current products from the display or config
+      const productsGrid = document.getElementById('productsGrid')
+      const currentProducts = []
+      
+      // If we have products in the grid, extract them
+      const productCards = productsGrid.querySelectorAll('.product-card')
+      productCards.forEach(card => {
+        const name = card.querySelector('.product-card-title')?.textContent || ''
+        const price = card.querySelector('.product-card-price')?.textContent || ''
+        const description = card.querySelector('.product-card-description')?.textContent || ''
+        
+        if (name) {
+          currentProducts.push({
+            name: name.trim(),
+            price: price.trim(),
+            note: description.trim()
+          })
+        }
+      })
+      
+      return currentProducts.length > 0 ? currentProducts : []
+    },
+
+    displayProducts(products) {
+      const grid = document.getElementById('productsGrid')
+      if (!grid) return
+      
+      if (!products || products.length === 0) {
+        grid.innerHTML = `
+          <div class="empty-products">
+            <i class="fas fa-box-open" style="font-size: 3rem; color: #9CA3AF; margin-bottom: 1rem;"></i>
+            <p>No products configured yet. Click "Edit Products" to add your first product or service.</p>
+          </div>
+        `
+        return
+      }
+      
+      grid.innerHTML = products.map((product, index) => `
+        <div class="product-card">
+          <div class="product-card-header">
+            <div class="product-card-icon">
+              <i class="fas fa-box"></i>
+            </div>
+            <h3 class="product-card-title">${AppConfig.escapeHtml(product.name || 'Unnamed Product')}</h3>
+          </div>
+          ${product.price ? `<div class="product-card-price">${AppConfig.escapeHtml(product.price)}</div>` : ''}
+          ${product.note ? `<p class="product-card-description">${AppConfig.escapeHtml(product.note)}</p>` : ''}
+          <div class="product-card-footer">
+            <div class="product-card-status">
+              <span class="status-dot"></span>
+              <span>Active</span>
+            </div>
+            <small>Product #${index + 1}</small>
+          </div>
+        </div>
+      `).join('')
+    },
+
+    escapeHtml(text) {
+      const div = document.createElement('div')
+      div.textContent = text
+      return div.innerHTML
+    },
+
+    // Products/Services Management
+    populateProducts(d, products) {
+      const container = document.getElementById('productsContainer')
+      if (!container) return
+      
+      // Clear existing products except the template
+      const template = container.querySelector('.product-item[data-index="0"]')
+      container.innerHTML = ''
+      if (template) {
+        container.appendChild(template)
+      }
+      
+      // Add products from config
+      products.forEach((product, index) => {
+        if (index === 0) {
+          // Update the first product item
+          const firstItem = container.querySelector('.product-item[data-index="0"]')
+          if (firstItem) {
+            AppConfig.updateProductItem(firstItem, product)
+          }
+        } else {
+          // Add new product items
+          AppConfig.addProductItem(product, index)
+        }
+      })
+    },
+
+    updateProductItem(item, product) {
+      const nameInput = item.querySelector('.product-name')
+      const priceInput = item.querySelector('.product-price')
+      const noteTextarea = item.querySelector('.product-note')
+      
+      if (nameInput) nameInput.value = product.name || ''
+      if (priceInput) priceInput.value = product.price || ''
+      if (noteTextarea) noteTextarea.value = product.note || ''
+    },
+
+    addProductItem(product = {}, index) {
+      const container = document.getElementById('productsContainer')
+      if (!container) return
+      
+      const template = container.querySelector('.product-item[data-index="0"]')
+      if (!template) return
+      
+      const newItem = template.cloneNode(true)
+      newItem.dataset.index = index
+      newItem.querySelector('.product-name').value = product.name || ''
+      newItem.querySelector('.product-price').value = product.price || ''
+      newItem.querySelector('.product-note').value = product.note || ''
+      
+      container.appendChild(newItem)
+    },
+
+    setupProductsManagement(d) {
+      const container = document.getElementById('productsContainer')
+      const addBtn = document.querySelector('.add-product')
+      
+      if (!container || !addBtn) return
+      
+      // Add product button
+      addBtn.addEventListener('click', () => {
+        const currentItems = container.querySelectorAll('.product-item')
+        const newIndex = currentItems.length
+        AppConfig.addProductItem({}, newIndex)
+      })
+      
+      // Remove product buttons (event delegation)
+      container.addEventListener('click', (e) => {
+        if (e.target.closest('.remove-product')) {
+          const item = e.target.closest('.product-item')
+          if (item && container.children.length > 1) {
+            item.remove()
+          }
+        }
+      })
+      
+      // Auto-save on input change
+      container.addEventListener('input', () => {
+        // Optional: Add auto-save functionality here
+      })
+    },
+
+    getProductsData() {
+      const container = document.getElementById('productsContainer')
+      if (!container) return []
+      
+      const products = []
+      const items = container.querySelectorAll('.product-item')
+      
+      items.forEach((item) => {
+        const name = item.querySelector('.product-name').value.trim()
+        const price = item.querySelector('.product-price').value.trim()
+        const note = item.querySelector('.product-note').value.trim()
+        
+        if (name || price || note) {
+          products.push({ name, price, note })
+        }
+      })
+      
+      return products
+    },
+
     clearForm(d) {
       if (!confirm('Are you sure you want to clear all form data?')) return
       const form = document.getElementById('configForm')
@@ -415,7 +830,7 @@
       }
       const charCounter = document.querySelector('.char-counter')
       if (charCounter) {
-        charCounter.textContent = '0/500'
+        charCounter.textContent = '0'
         charCounter.className = 'char-counter'
       }
       AppUtils.hideFormStatus()
@@ -488,4 +903,3 @@
 
   window.AppConfig = AppConfig
 })()
-

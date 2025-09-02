@@ -27,6 +27,19 @@ function register(app) {
       res.status(500).json({ success: false, error: error.message, message: `Failed to logout session ${req.params.session}` });
     }
   });
+
+  app.post('/api/sessions/:session/restart', async (req, res) => {
+    try {
+      const { session } = req.params;
+      logger.info('Session', `Attempting to restart session on WAHA: ${session}`);
+      const result = await wahaService.restartSession(session);
+      logger.info('Session', `Session ${session} restart result`, result);
+      res.json({ success: true, message: `Session ${session} restart requested on WAHA`, result });
+    } catch (error) {
+      logger.error('Session', `Error restarting session ${req.params.session}`, error);
+      res.status(500).json({ success: false, error: error.message, message: `Failed to restart session ${req.params.session}` });
+    }
+  });
 }
 
 module.exports = { register };

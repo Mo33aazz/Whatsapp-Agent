@@ -26,7 +26,8 @@
             if (logoutBtn) logoutBtn.style.display = 'inline-block'
             if (refreshQrBtn) refreshQrBtn.style.display = 'none'
             if (qrInstructions) {
-              qrInstructions.textContent = ''
+              // Hide instructions when authenticated
+              qrInstructions.style.display = 'none'
               qrInstructions.style.color = ''
               qrInstructions.style.fontWeight = ''
             }
@@ -70,7 +71,8 @@
             refreshQrBtn.addEventListener('click', () => d.loadQRCode())
           }
           if (qrInstructions) {
-            qrInstructions.innerHTML = 'Scan this QR code with your WhatsApp to connect the bot'
+            // Preserve existing instructions content; only ensure default styling
+            qrInstructions.style.display = ''
             qrInstructions.style.color = ''
             qrInstructions.style.fontWeight = ''
           }
@@ -93,7 +95,8 @@
             if (logoutBtn) logoutBtn.style.display = 'inline-block'
             if (refreshQrBtn) refreshQrBtn.style.display = 'none'
             if (qrInstructions) {
-              qrInstructions.textContent = ''
+              // Hide instructions when already connected
+              qrInstructions.style.display = 'none'
               qrInstructions.style.color = ''
               qrInstructions.style.fontWeight = ''
             }
@@ -120,4 +123,3 @@
 
   window.AppQR = AppQR
 })()
-

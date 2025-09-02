@@ -2,11 +2,32 @@ const logger = require('../utils/logger');
 const memoryService = require('../services/memoryService');
 const openrouterService = require('../services/openrouterService');
 
+// Helper function to generate system prompt with products
+function generateSystemPromptWithProducts(basePrompt, products) {
+  if (!basePrompt) {
+    basePrompt = 'You are a helpful AI assistant for WhatsApp. Be concise and friendly in your responses. Keep messages under 2000 characters.';
+  }
+  
+  if (!products || !Array.isArray(products) || products.length === 0) {
+    return basePrompt;
+  }
+  
+  let productsSection = '\n\nAvailable Products/Services:\n';
+  products.forEach((product, index) => {
+    const name = product.name || 'Unnamed Product';
+    const price = product.price || 'Price not specified';
+    const note = product.note ? ` - ${product.note}` : '';
+    productsSection += `${index + 1}. ${name} - ${price}${note}\n`;
+  });
+  
+  return basePrompt + productsSection;
+}
+
 function register(app) {
   // Save configuration
   app.post('/config', async (req, res) => {
     try {
-      const { openrouterApiKey, aiModel, systemPrompt } = req.body || {};
+      const { openrouterApiKey, aiModel, systemPrompt, products } = req.body || {};
       const existing = await memoryService.getConfig();
 
       let newApiKey = existing?.openrouterApiKey || '';
@@ -16,10 +37,14 @@ function register(app) {
         }
       }
 
+      // Generate enhanced system prompt with products/services
+      const enhancedSystemPrompt = generateSystemPromptWithProducts(systemPrompt, products);
+
       const newConfig = {
         openrouterApiKey: newApiKey,
         aiModel: (aiModel || existing?.aiModel || 'openai/gpt-4o-mini'),
-        systemPrompt: (systemPrompt || existing?.systemPrompt || 'You are a helpful WhatsApp assistant.'),
+        systemPrompt: enhancedSystemPrompt,
+        products: products || [],
         wahaBaseUrl: existing?.wahaBaseUrl || process.env.WAHA_URL || 'http://localhost:3000',
         webhookUrl: existing?.webhookUrl || process.env.WEBHOOK_URL || 'http://host.docker.internal:3001/waha-events',
         lastUpdated: new Date().toISOString()
@@ -37,7 +62,11 @@ function register(app) {
   app.get('/config', async (req, res) => {
     try {
       const config = await memoryService.getConfig();
-      const safeConfig = { ...config, openrouterApiKey: config.openrouterApiKey ? '***configured***' : '' };
+      const safeConfig = {
+        ...config,
+        openrouterApiKey: config.openrouterApiKey ? '***configured***' : '',
+        products: config.products || []
+      };
       res.json({ success: true, config: safeConfig });
     } catch (error) {
       logger.error('Config', 'Error getting configuration', error);
@@ -120,6 +149,41 @@ function register(app) {
       res.json({ success: true, models: ids });
     } catch (error) {
       logger.error('OpenRouter', 'Error fetching OpenRouter models', error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  // Products management endpoint
+  app.post('/config/products', async (req, res) => {
+    try {
+      const { products } = req.body || {};
+      if (!Array.isArray(products)) {
+        return res.status(400).json({ success: false, message: 'Products must be an array' });
+      }
+
+      const existing = await memoryService.getConfig();
+      const newConfig = {
+        ...existing,
+        products: products,
+        lastUpdated: new Date().toISOString()
+      };
+
+      await memoryService.saveConfig(newConfig);
+      res.json({ success: true, message: 'Products saved successfully', products });
+    } catch (error) {
+      logger.error('Config', 'Error saving products', error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  // Get products endpoint
+  app.get('/config/products', async (req, res) => {
+    try {
+      const config = await memoryService.getConfig();
+      const products = config.products || [];
+      res.json({ success: true, products });
+    } catch (error) {
+      logger.error('Config', 'Error getting products', error);
       res.status(500).json({ success: false, error: error.message });
     }
   });

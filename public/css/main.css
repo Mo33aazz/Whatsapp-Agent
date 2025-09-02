@@ -46,7 +46,14 @@
 @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 .qr-image { max-width: 300px; max-height: 300px; border-radius: 12px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1); }
 .qr-actions { margin-top: 20px; }
-.qr-instructions { margin-top: 10px; color: #6c757d; font-size: 0.9rem; }
+.force-restart-note { display: block; margin-top: 6px; color: #6b7280; font-size: 0.85rem; }
+.qr-instructions { margin-top: 12px; color: #4b5563; font-size: 0.95rem; text-align: left; max-width: 360px; margin-left: auto; margin-right: auto; }
+.qr-instructions-title { font-weight: 600; color: #111827; margin: 0 0 8px 0; font-size: 0.95rem; }
+.qr-steps { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.qr-steps li { display: flex; align-items: center; gap: 8px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 10px; font-size: 0.9rem; color: #374151; }
+.qr-steps li::before { content: '•'; color: #10B981; font-weight: 700; display: inline-block; width: 12px; text-align: center; }
+/* Hide any dynamically injected instructions within the QR container to avoid duplicates */
+.qr-container .qr-instructions { display: none !important; }
 
 /* Configuration Section */
 .config-section { grid-column: span 1; }

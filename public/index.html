@@ -32,10 +32,6 @@
                         <span class="status-dot" id="statusDot"></span>
                         <span id="statusText">Checking status...</span>
                     </div>
-                    <button id="clearConversationsHeader" class="btn btn-danger" style="min-width:auto; padding:8px 12px;">
-                        <i class="fas fa-trash"></i>
-                        <span>Reset Conversations</span>
-                    </button>
                 </div>
             </div>
         </nav>
@@ -102,8 +98,17 @@
                     <img id="qrImage" class="qr-image" style="display: none;" alt="WhatsApp QR Code">
                 </div>
                     <div class="qr-actions">
-                        <button id="refreshQr" class="btn btn-secondary">Refresh QR Code</button>
-                        <p class="qr-instructions">Scan this QR code with your WhatsApp to connect the bot</p>
+                        <button id="forceRestart" class="btn btn-danger">Force restart</button>
+                        <small class="force-restart-note">Note: This will restart the WhatsApp worker.</small>
+                        <div class="qr-instructions">
+                            <p class="qr-instructions-title">Scan to connect</p>
+                            <ol class="qr-steps">
+                                <li>Open WhatsApp</li>
+                                <li>Go to Settings → Linked Devices</li>
+                                <li>Tap “Link a device”</li>
+                                <li>Scan this QR code</li>
+                            </ol>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -161,9 +166,9 @@
                     <div class="form-group">
                         <label for="systemPrompt">System Prompt</label>
                         <div class="input-wrapper">
-                            <textarea id="systemPrompt" name="systemPrompt" rows="3" placeholder="You are a helpful WhatsApp assistant." maxlength="500"></textarea>
+                            <textarea id="systemPrompt" name="systemPrompt" rows="3" placeholder="You are a helpful WhatsApp assistant."></textarea>
                             <div class="char-counter">
-                                <span id="promptCharCount">0</span>/500
+                                <span id="promptCharCount">0</span>
                             </div>
                         </div>
                         <div class="validation-message" id="systemPromptMessage"></div>
@@ -183,6 +188,68 @@
                     </div>
                     <div class="form-status" id="formStatus"></div>
                 </form>
+            </section>
+
+            <!-- Products/Services Section -->
+            <section class="card products-section">
+                <div class="products-header">
+                    <h2>Products & Services</h2>
+                    <button id="editProductsBtn" class="btn btn-secondary">
+                        <span class="btn-text"><i class="fas fa-pen-to-square"></i> Edit Products</span>
+                    </button>
+                </div>
+                <div id="productsSuccess" class="config-success" style="display:none;">
+                    <div class="success-icon" style="font-size: 28px; color: #10B981; margin-bottom: 8px;">
+                        <i class="fas fa-check-circle"></i>
+                    </div>
+                    <h3 style="margin: 0 0 6px 0; color: #111827;">Products Updated</h3>
+                    <p style="margin: 0 0 14px 0; color: #6B7280;">Your products and services have been saved successfully.</p>
+                </div>
+                <div id="productsEditForm" class="products-edit-form">
+                    <div class="products-container" id="productsContainer">
+                        <div class="product-item" data-index="0">
+                            <div class="product-row">
+                                <div class="product-field">
+                                    <input type="text" class="product-name" placeholder="Product/Service Name" maxlength="100">
+                                </div>
+                                <div class="product-field">
+                                    <input type="text" class="product-price" placeholder="Price (numbers and letters)" maxlength="50">
+                                </div>
+                                <div class="product-field">
+                                    <textarea class="product-note" placeholder="Note" rows="2" maxlength="200"></textarea>
+                                </div>
+                                <div class="product-actions">
+                                    <button type="button" class="btn btn-danger btn-sm remove-product">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-secondary btn-sm add-product">
+                        <i class="fas fa-plus"></i> Add Product/Service
+                    </button>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-primary" id="saveProductsBtn">
+                            <span class="btn-text">Save Products</span>
+                            <span class="btn-loading" style="display: none;">
+                                <i class="fas fa-spinner fa-spin"></i> Saving...
+                            </span>
+                        </button>
+                        <button type="button" class="btn btn-secondary" id="cancelProductsBtn" style="margin-left: 8px;">
+                            Cancel
+                        </button>
+                    </div>
+                    <div class="form-status" id="productsFormStatus"></div>
+                </div>
+                <div id="productsDisplay" class="products-display">
+                    <div class="products-grid" id="productsGrid">
+                        <div class="empty-products">
+                            <i class="fas fa-box-open" style="font-size: 3rem; color: #9CA3AF; margin-bottom: 1rem;"></i>
+                            <p>No products configured yet. Click "Edit Products" to add your first product or service.</p>
+                        </div>
+                    </div>
+                </div>
             </section>
 
             <!-- Status Section -->

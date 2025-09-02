@@ -271,6 +271,22 @@ class WAHAService {
     }
   }
 
+  async restartSession(sessionName) {
+    const targetSession = sessionName || this.sessionName;
+    const originalSessionName = this.sessionManager.sessionName;
+
+    if (targetSession !== originalSessionName) {
+      this.sessionManager.sessionName = targetSession;
+    }
+
+    try {
+      const result = await this.sessionManager.restartSession();
+      return result;
+    } finally {
+      this.sessionManager.sessionName = originalSessionName;
+    }
+  }
+
   async ensureSessionStarted() {
     if (this._logoutLocked) return { status: 'LOCKED' };
     return this.sessionManager.ensureSessionStarted(() => {});

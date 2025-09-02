@@ -51,8 +51,8 @@
         })
       }
 
-      const refreshQrBtn = document.getElementById('refreshQr')
-      if (refreshQrBtn) refreshQrBtn.addEventListener('click', () => this.loadQRCode())
+      const forceRestartBtn = document.getElementById('forceRestart')
+      if (forceRestartBtn) forceRestartBtn.addEventListener('click', () => this.forceRestart())
 
       const testAPIBtn = document.getElementById('testAPI')
       if (testAPIBtn) testAPIBtn.addEventListener('click', () => this.testOpenRouterAPI())
@@ -169,8 +169,7 @@
           console.log('[UI] Logout successful', result)
           if (logoutBtn) logoutBtn.style.display = 'none'
           if (disconnectBtn) disconnectBtn.style.display = 'none'
-          const refreshQrBtn = document.getElementById('refreshQr')
-          if (refreshQrBtn) refreshQrBtn.style.display = 'inline-block'
+          // Keep Force restart button visible at all times
           await this.loadQRCode()
           await this.loadStatus()
         } else {
@@ -184,6 +183,33 @@
         if (btnText) btnText.style.display = 'inline-flex'
         if (btnLoading) btnLoading.style.display = 'none'
         if (targetBtn) { targetBtn.disabled = false; targetBtn.classList.remove('loading') }
+      }
+    }
+
+    // Force restart session via server API
+    async forceRestart() {
+      const btn = document.getElementById('forceRestart')
+      try {
+        this.showToast('Forcing session restart...', 'info')
+        this.setButtonLoading(btn, true, 'Restarting...')
+        const res = await fetch('/api/sessions/default/restart', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) {
+          this.showToast(`Restart failed: ${data.message || data.error || 'Unknown error'}`, 'error')
+          return
+        }
+        this.showToast('Session restart triggered successfully', 'success')
+        // Refresh QR and status after restart
+        await this.loadQRCode()
+        await this.loadStatus()
+      } catch (e) {
+        console.error('Force restart error', e)
+        this.showToast('Failed to trigger restart. Please try again.', 'error')
+      } finally {
+        this.setButtonLoading(btn, false, 'Force restart')
       }
     }
 

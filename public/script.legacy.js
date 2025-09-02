@@ -884,19 +884,15 @@ class WhatsAppBotDashboard {
         const value = textarea.value.trim();
         const wrapper = textarea.closest('.form-group');
         const charCounter = wrapper?.querySelector('.char-counter');
-        const isValid = value.length <= 500; // Allow empty values, just check max length
+        // Unlimited length allowed; always valid
+        const isValid = true;
         
-        let message = '';
-        if (value.length > 500) {
-            message = 'System prompt must be less than 500 characters';
-        } else {
-            message = value.length === 0 ? 'System prompt is optional' : 'Valid system prompt';
-        }
+        const message = value.length === 0 ? 'System prompt is optional' : 'Valid system prompt';
         
         // Update character counter
         if (charCounter) {
-            charCounter.textContent = `${value.length}/500`;
-            charCounter.className = `char-counter ${value.length > 500 ? 'over-limit' : ''}`;
+            charCounter.textContent = `${value.length}`;
+            charCounter.className = 'char-counter';
         }
         
         this.updateValidationState(textarea, isValid, message);
@@ -1167,7 +1163,7 @@ class WhatsAppBotDashboard {
             // Reset character counter
             const charCounter = document.querySelector('.char-counter');
             if (charCounter) {
-                charCounter.textContent = '0/500';
+                charCounter.textContent = '0';
                 charCounter.className = 'char-counter';
             }
             

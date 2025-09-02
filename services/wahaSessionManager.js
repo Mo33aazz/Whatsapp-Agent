@@ -239,6 +239,28 @@ class WAHASessionManager {
     }
   }
 
+  async restartSession() {
+    try {
+      logger.info('Session', `Restarting session '${this.sessionName}'...`);
+
+      const response = await httpClient.post(
+        `${this.baseURL}/api/sessions/${this.sessionName}/restart`,
+        {},
+        {
+          timeout: 20000,
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }
+        }
+      );
+
+      logger.info('Session', 'Session restart response', { status: response.status, data: response.data });
+      this._resetCaches();
+      return response.data || { status: 'restarted' };
+    } catch (error) {
+      logger.error('Error restarting session', 'Session', { error: error.message });
+      throw error;
+    }
+  }
+
   async ensureSessionStarted(safeEnsureWebhookFn) {
     try {
       const sessionData = await this.getSessionStatus();
